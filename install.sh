@@ -476,6 +476,10 @@ if.app-name-regex-substring = 'Spotify|Music'
 run = 'move-node-to-workspace 3'
 
 [[on-window-detected]]
+if.app-name-regex-substring = 'Claude'
+run = 'move-node-to-workspace 6'
+
+[[on-window-detected]]
 if.app-name-regex-substring = 'Steam'
 run = 'move-node-to-workspace 9'
 
