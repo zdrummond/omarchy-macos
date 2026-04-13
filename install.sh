@@ -347,13 +347,7 @@ after-startup-command = []
 
 # Automatically move focus to wherever your mouse is
 on-focus-changed = [
-  'move-mouse window-lazy-center',
-  'exec-and-forget sketchybar --trigger aerospace_workspace_change AEROSPACE_FOCUSED_WORKSPACE=$AEROSPACE_FOCUSED_WORKSPACE'
-]
-
-# Notify SketchyBar when workspace changes
-exec-on-workspace-change = ['/bin/bash', '-c',
-  'sketchybar --trigger aerospace_workspace_change AEROSPACE_FOCUSED_WORKSPACE=$AEROSPACE_FOCUSED_WORKSPACE'
+  'move-mouse window-lazy-center'
 ]
 
 # Start Aerospace on login
@@ -461,27 +455,35 @@ alt-ctrl-shift-l = 'move-node-to-monitor right'
 [[on-window-detected]]
 if.app-name-regex-substring = 'Google Chrome|Chrome'
 if.window-title-regex-substring = 'Gmail'
-run = 'move-node-to-workspace 1'
+run = ['move-node-to-workspace 1', 'workspace 1']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Messages'
-run = 'move-node-to-workspace 2'
+run = ['move-node-to-workspace 2', 'workspace 2']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Signal'
-run = 'move-node-to-workspace 2'
+run = ['move-node-to-workspace 2', 'workspace 2']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Spotify|Music'
-run = 'move-node-to-workspace 3'
+run = ['move-node-to-workspace 3', 'workspace 3']
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Ghostty|WezTerm|Warp|iTerm2'
+run = ['move-node-to-workspace 4', 'workspace 4']
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Zed|Antigravity'
+run = ['move-node-to-workspace 5', 'workspace 5']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Claude'
-run = 'move-node-to-workspace 6'
+run = ['move-node-to-workspace 6', 'workspace 6']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Steam'
-run = 'move-node-to-workspace 9'
+run = ['move-node-to-workspace 9', 'workspace 9']
 
 # [[on-window-detected]]
 # if.app-name-regex-substring = 'slack|discord'
@@ -635,14 +637,11 @@ COLORS_EOF
 #!/usr/bin/env bash
 source "$CONFIG_DIR/colors.sh"
 
-# Register the custom event first
-sketchybar --add event aerospace_workspace_change
-
 for sid in 1 2 3 4 5 6 7 8 9; do
   sketchybar --add item space.$sid left \
     --set space.$sid \
       icon="$sid" \
-      icon.font="SF Pro:Bold:12.0" \
+      icon.font="SF Pro:Regular:12.0" \
       icon.color=$SUBTEXT \
       icon.padding_left=8 \
       icon.padding_right=4 \
@@ -657,12 +656,9 @@ for sid in 1 2 3 4 5 6 7 8 9; do
       background.corner_radius=6 \
       background.height=24 \
       padding_left=2 \
-      padding_right=2 \
-      script="$CONFIG_DIR/plugins/spaces.sh" \
-    --subscribe space.$sid aerospace_workspace_change
+      padding_right=2
 done
 
-# Separator after spaces
 sketchybar --add item spaces_separator left \
   --set spaces_separator \
     icon="|" \
@@ -684,7 +680,7 @@ sketchybar --add item front_app left \
     label.font="SF Pro:Semibold:13.0" \
     label.color=$MAUVE \
     script="$CONFIG_DIR/plugins/front_app.sh" \
-  --subscribe front_app front_app_switched aerospace_workspace_change
+  --subscribe front_app front_app_switched
 FRONTAPP_ITEM_EOF
 
   # ── Right-side items: wifi, battery, clock ─────────────────────────────
@@ -729,56 +725,74 @@ CLOCK_ITEM_EOF
 
   cat > "$SKETCHY_DIR/plugins/spaces.sh" << 'SPACES_PLUGIN_EOF'
 #!/usr/bin/env bash
+# Usage: source "$CONFIG_DIR/plugins/spaces.sh" && highlight_space <workspace_number>
+# Sets the given space as focused and all others as unfocused.
+
 source "$CONFIG_DIR/colors.sh"
 
-SID=${NAME##*.}
+ALIAS_FILE="$HOME/.config/sketchybar/space_aliases"
 
-APPS=$(aerospace list-windows --workspace "$SID" 2>/dev/null \
-  | awk -F'|' '{gsub(/^ +| +$/, "", $2); print $2}' \
-  | sort -u | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')
+get_space_label() {
+  local sid="$1"
+  local alias
+  alias=$(grep "^${sid}=" "$ALIAS_FILE" 2>/dev/null | cut -d= -f2-)
+  if [ -n "$alias" ]; then
+    echo "$alias"
+  else
+    aerospace list-windows --workspace "$sid" 2>/dev/null \
+      | awk -F'|' '{gsub(/^ +| +$/, "", $2); print $2}' \
+      | sort -u | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g'
+  fi
+}
 
-if [ -n "$APPS" ]; then
-  HAS_APPS=on
-else
-  HAS_APPS=off
-fi
+highlight_space() {
+  local focused="$1"
 
-if [ "$SID" = "$AEROSPACE_FOCUSED_WORKSPACE" ]; then
-  sketchybar --set "$NAME" \
-    icon="$SID" \
-    icon.font="SF Pro:Bold:12.0" \
-    icon.color=$BLUE \
-    label="$APPS" \
-    label.drawing=$HAS_APPS \
-    label.font="SF Pro:Bold:12.0" \
-    label.color=$TEXT \
-    background.color=$ITEM_BG_ACTIVE \
-    background.border_color=$BLUE \
-    background.border_width=2 \
-    background.drawing=on
-else
-  sketchybar --set "$NAME" \
-    icon="$SID" \
-    icon.font="SF Pro:Regular:12.0" \
-    icon.color=$( [ -n "$APPS" ] && echo $MAUVE || echo $SUBTEXT ) \
-    label="$APPS" \
-    label.drawing=$HAS_APPS \
-    label.font="SF Pro:Regular:12.0" \
-    label.color=$SUBTEXT \
-    background.color=0x00000000 \
-    background.border_color=0x00000000 \
-    background.border_width=0 \
-    background.drawing=on
-fi
+  for SID in 1 2 3 4 5 6 7 8 9; do
+    local name="space.$SID"
+    local label
+    label=$(get_space_label "$SID")
+    local has_label=$( [ -n "$label" ] && echo on || echo off )
+
+    if [ "$SID" = "$focused" ]; then
+      sketchybar --set "$name" \
+        icon.font="SF Pro:Bold:12.0" \
+        icon.color=$BLUE \
+        label="$label" \
+        label.drawing=$has_label \
+        label.font="SF Pro:Bold:12.0" \
+        label.color=$TEXT \
+        background.color=$ITEM_BG_ACTIVE \
+        background.border_color=$BLUE \
+        background.border_width=2
+    else
+      sketchybar --set "$name" \
+        icon.font="SF Pro:Regular:12.0" \
+        icon.color=$( [ -n "$label" ] && echo $MAUVE || echo $SUBTEXT ) \
+        label="$label" \
+        label.drawing=$has_label \
+        label.font="SF Pro:Regular:12.0" \
+        label.color=$SUBTEXT \
+        background.color=0x00000000 \
+        background.border_color=0x00000000 \
+        background.border_width=0
+    fi
+
+    # Force visual redraw: sketchybar does not repaint background/border
+    # changes on --set alone. Toggling background.drawing does.
+    sketchybar --set "$name" background.drawing=off
+    sketchybar --set "$name" background.drawing=on
+  done
+}
 SPACES_PLUGIN_EOF
 
   cat > "$SKETCHY_DIR/plugins/front_app.sh" << 'FRONTAPP_PLUGIN_EOF'
 #!/usr/bin/env bash
-WS=$(aerospace list-workspaces --focused 2>/dev/null)
 APP="${INFO}"
 if [ -z "$APP" ]; then
   APP=$(osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true' 2>/dev/null)
 fi
+WS=$(aerospace list-workspaces --focused 2>/dev/null | head -1)
 sketchybar --set "$NAME" label="$WS $APP"
 FRONTAPP_PLUGIN_EOF
 
