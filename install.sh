@@ -788,12 +788,15 @@ SPACES_PLUGIN_EOF
 
   cat > "$SKETCHY_DIR/plugins/front_app.sh" << 'FRONTAPP_PLUGIN_EOF'
 #!/usr/bin/env bash
+source "$CONFIG_DIR/plugins/spaces.sh"
+
 APP="${INFO}"
 if [ -z "$APP" ]; then
   APP=$(osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true' 2>/dev/null)
 fi
 WS=$(aerospace list-workspaces --focused 2>/dev/null | head -1)
 sketchybar --set "$NAME" label="$WS $APP"
+highlight_space "$WS"
 FRONTAPP_PLUGIN_EOF
 
   cat > "$SKETCHY_DIR/plugins/clock.sh" << 'CLOCK_PLUGIN_EOF'
