@@ -34,6 +34,11 @@ SKHD_CFG="$SKHD_DIR/skhdrc"
 SKETCHY_DIR="$HOME/.config/sketchybar"
 BORDERS_DIR="$HOME/.config/borders"
 
+BAR_TOGGLE_BIN="$SKETCHY_DIR/plugins/bar_toggle"
+BAR_TOGGLE_SRC="$SKETCHY_DIR/plugins/bar_toggle.swift"
+BAR_TOGGLE_LABEL="com.omarchy-macos.bar_toggle"
+BAR_TOGGLE_PLIST="$HOME/Library/LaunchAgents/$BAR_TOGGLE_LABEL.plist"
+
 INSTALLED_MARKER="$BACKUP_DIR/.installed"
 
 # =============================================================================
@@ -62,6 +67,7 @@ cmd_install() {
   write_skhd_config
   write_sketchybar_config
   write_borders_config
+  write_bar_toggle_daemon
 
   header "Tuning macOS for instant window movement..."
   defaults write NSGlobalDomain NSAutomaticWindowAnimationsEnabled -bool false
@@ -117,6 +123,7 @@ cmd_revert() {
   rm -rf "$SKHD_DIR"
   rm -rf "$SKETCHY_DIR"
   rm -rf "$BORDERS_DIR"
+  rm -f "$BAR_TOGGLE_PLIST"
   success "Config files removed"
 
   header "Restoring backups..."
@@ -293,10 +300,18 @@ start_services() {
     brew services start borders 2>/dev/null || \
     warn "Could not auto-start borders"
 
+  info "Starting bar_toggle daemon..."
+  launchctl unload "$BAR_TOGGLE_PLIST" 2>/dev/null || true
+  launchctl load "$BAR_TOGGLE_PLIST" 2>/dev/null || \
+    warn "Could not load bar_toggle LaunchAgent"
+
   success "Services started"
 }
 
 stop_services() {
+  if [[ -f "$BAR_TOGGLE_PLIST" ]]; then
+    launchctl unload "$BAR_TOGGLE_PLIST" 2>/dev/null && info "  stopped bar_toggle" || true
+  fi
   for svc in borders sketchybar aerospace; do
     if brew services list | grep -q "^$svc"; then
       brew services stop "$svc" 2>/dev/null && info "  stopped $svc" || true
@@ -853,6 +868,103 @@ WIFI_PLUGIN_EOF
   chmod +x "$SKETCHY_DIR/items/"*.sh
 
   success "SketchyBar config written to $SKETCHY_DIR"
+}
+
+# =============================================================================
+# BAR TOGGLE DAEMON
+#
+# Tiny Swift binary that polls the Option modifier and shows the SketchyBar
+# while Option is held. On each show it fires `front_app_switched` so the
+# space highlight is repainted fresh (workaround for sketchybar's background
+# redraw quirk when --set runs against a hidden bar). Loaded as a LaunchAgent.
+# =============================================================================
+write_bar_toggle_daemon() {
+  info "Writing bar_toggle daemon..."
+  mkdir -p "$SKETCHY_DIR/plugins"
+
+  cat > "$BAR_TOGGLE_SRC" << 'BAR_TOGGLE_SWIFT_EOF'
+import Foundation
+import CoreGraphics
+
+let showDelay: TimeInterval = 0.15
+let pollInterval: TimeInterval = 0.05
+let sketchybarPath = "/opt/homebrew/bin/sketchybar"
+
+func sb(_ args: String...) {
+    let p = Process()
+    p.launchPath = sketchybarPath
+    p.arguments = args
+    p.standardOutput = FileHandle.nullDevice
+    p.standardError = FileHandle.nullDevice
+    try? p.run()
+    p.waitUntilExit()
+}
+
+func optionPressed() -> Bool {
+    let flags = CGEventSource.flagsState(.combinedSessionState)
+    return flags.rawValue & CGEventFlags.maskAlternate.rawValue != 0
+}
+
+sb("--bar", "hidden=on", "topmost=window")
+
+var visible = false
+var holdStart: Date? = nil
+
+while true {
+    let pressed = optionPressed()
+    if pressed && !visible {
+        if holdStart == nil {
+            holdStart = Date()
+        } else if Date().timeIntervalSince(holdStart!) >= showDelay {
+            sb("--bar", "hidden=off")
+            sb("--trigger", "front_app_switched")
+            visible = true
+        }
+    } else if !pressed {
+        holdStart = nil
+        if visible {
+            sb("--bar", "hidden=on")
+            visible = false
+        }
+    }
+    Thread.sleep(forTimeInterval: pollInterval)
+}
+BAR_TOGGLE_SWIFT_EOF
+
+  if ! command -v swiftc &>/dev/null; then
+    warn "swiftc not found — install Xcode Command Line Tools (xcode-select --install)"
+    return 1
+  fi
+
+  info "Compiling bar_toggle..."
+  swiftc -O "$BAR_TOGGLE_SRC" -o "$BAR_TOGGLE_BIN"
+  chmod +x "$BAR_TOGGLE_BIN"
+
+  mkdir -p "$HOME/Library/LaunchAgents"
+  cat > "$BAR_TOGGLE_PLIST" << BAR_TOGGLE_PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$BAR_TOGGLE_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$BAR_TOGGLE_BIN</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/bar_toggle.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/bar_toggle.log</string>
+</dict>
+</plist>
+BAR_TOGGLE_PLIST_EOF
+
+  success "bar_toggle daemon written"
 }
 
 # =============================================================================
