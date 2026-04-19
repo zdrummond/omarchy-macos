@@ -600,8 +600,8 @@ sketchybar --bar \
   border_width=1      \
   border_color=$BORDER_COLOR \
   shadow=off          \
-  topmost=off         \
-  y_offset=0          \
+  topmost=window      \
+  y_offset=26         \
   sticky=on           \
   padding_left=8      \
   padding_right=8
