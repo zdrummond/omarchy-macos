@@ -749,57 +749,62 @@ source "$CONFIG_DIR/colors.sh"
 
 ALIAS_FILE="$HOME/.config/sketchybar/space_aliases"
 
-get_space_label() {
-  local sid="$1"
-  local alias
-  alias=$(grep "^${sid}=" "$ALIAS_FILE" 2>/dev/null | cut -d= -f2-)
-  if [ -n "$alias" ]; then
-    echo "$alias"
-  else
-    aerospace list-windows --workspace "$sid" 2>/dev/null \
-      | awk -F'|' '{gsub(/^ +| +$/, "", $2); print $2}' \
-      | sort -u | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g'
-  fi
-}
-
 highlight_space() {
   local focused="$1"
 
+  # One aerospace call for all windows, grouped by workspace.
+  local windows
+  windows=$(aerospace list-windows --all --format '%{workspace}|%{app-name}' 2>/dev/null)
+
+  # Build a single batched sketchybar invocation (fork/socket overhead is the
+  # dominant cost; one chained call is ~30x faster than per-space calls).
+  local args=()
   for SID in 1 2 3 4 5 6 7 8 9 0; do
     local name="space.$SID"
-    local label
-    label=$(get_space_label "$SID")
+    local label alias
+    alias=$(grep "^${SID}=" "$ALIAS_FILE" 2>/dev/null | cut -d= -f2-)
+    if [ -n "$alias" ]; then
+      label="$alias"
+    else
+      label=$(printf '%s\n' "$windows" \
+        | awk -F'|' -v s="$SID" '$1==s{print $2}' \
+        | sort -u | paste -sd "," - | sed 's/,/, /g')
+    fi
     local has_label=$( [ -n "$label" ] && echo on || echo off )
 
     if [ "$SID" = "$focused" ]; then
-      sketchybar --set "$name" \
-        icon.font="SF Pro:Bold:12.0" \
-        icon.color=$BLUE \
-        label="$label" \
-        label.drawing=$has_label \
-        label.font="SF Pro:Bold:12.0" \
-        label.color=$TEXT \
-        background.color=$ITEM_BG_ACTIVE \
-        background.border_color=$BLUE \
-        background.border_width=2
+      args+=(--set "$name"
+        icon.font="SF Pro:Bold:12.0"
+        icon.color=$BLUE
+        label="$label"
+        label.drawing=$has_label
+        label.font="SF Pro:Bold:12.0"
+        label.color=$TEXT
+        background.color=$ITEM_BG_ACTIVE
+        background.border_color=$BLUE
+        background.border_width=2)
     else
-      sketchybar --set "$name" \
-        icon.font="SF Pro:Regular:12.0" \
-        icon.color=$( [ -n "$label" ] && echo $MAUVE || echo $SUBTEXT ) \
-        label="$label" \
-        label.drawing=$has_label \
-        label.font="SF Pro:Regular:12.0" \
-        label.color=$SUBTEXT \
-        background.color=0x00000000 \
-        background.border_color=0x00000000 \
-        background.border_width=0
+      local idle_icon_color=$SUBTEXT
+      [ -n "$label" ] && idle_icon_color=$MAUVE
+      args+=(--set "$name"
+        icon.font="SF Pro:Regular:12.0"
+        icon.color=$idle_icon_color
+        label="$label"
+        label.drawing=$has_label
+        label.font="SF Pro:Regular:12.0"
+        label.color=$SUBTEXT
+        background.color=0x00000000
+        background.border_color=0x00000000
+        background.border_width=0)
     fi
 
-    # Force visual redraw: sketchybar does not repaint background/border
-    # changes on --set alone. Toggling background.drawing does.
-    sketchybar --set "$name" background.drawing=off
-    sketchybar --set "$name" background.drawing=on
+    # Force redraw: sketchybar doesn't repaint background/border on --set
+    # alone. Toggling background.drawing does — batched in the same call.
+    args+=(--set "$name" background.drawing=off
+           --set "$name" background.drawing=on)
   done
+
+  sketchybar "${args[@]}"
 }
 SPACES_PLUGIN_EOF
 
