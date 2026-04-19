@@ -24,7 +24,7 @@ Bring the [Omarchy](https://omarchy.org/) / Hyprland Linux tiling workflow to ma
 
 ## Workspace Layout
 
-Workspaces 1–9 with automatic app assignment:
+Workspaces 1–10 with automatic app assignment:
 
 | Workspace | App(s) |
 |---|---|

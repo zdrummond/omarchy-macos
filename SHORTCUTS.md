@@ -6,8 +6,8 @@ All shortcuts use **Option (⌥)** as the modifier key, mirroring the SUPER key 
 
 | Shortcut | Action |
 |----------|--------|
-| ⌥ + 1–9 | Switch to workspace 1–9 |
-| ⌥ + Shift + 1–9 | Move focused window to workspace 1–9 |
+| ⌥ + 1–0 | Switch to workspace 1–10 |
+| ⌥ + Shift + 1–0 | Move focused window to workspace 1–10 |
 | ⌥ + Tab | Toggle back and forth between last workspace |
 | ⌥ + Shift + Tab | Move workspace to next monitor |
 
@@ -60,6 +60,7 @@ All shortcuts use **Option (⌥)** as the modifier key, mirroring the SUPER key 
 | ⌥ + Shift + F | File manager (Finder) |
 | ⌥ + Shift + M | Music (Spotify → Music.app) |
 | ⌥ + Shift + G | Communications (Slack → Messages) |
+| ⌥ + Shift + I | AI (ChatGPT → Claude) |
 | ⌥ + Shift + / | Passwords (1Password → Keychain Access) |
 
 ## Screenshots

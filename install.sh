@@ -387,8 +387,8 @@ outer.right      = 8
 # ── Default layout ─────────────────────────────────────────────────────────
 [mode.main.binding]
 
-# ── Workspace switching: ⌥ + 1-9 ─────────────────────────────────────────
-# (mirrors Hyprland: SUPER + 1-9)
+# ── Workspace switching: ⌥ + 0-9 ─────────────────────────────────────────
+# (mirrors Hyprland: SUPER + 0-9)
 alt-1 = 'workspace 1'
 alt-2 = 'workspace 2'
 alt-3 = 'workspace 3'
@@ -398,9 +398,10 @@ alt-6 = 'workspace 6'
 alt-7 = 'workspace 7'
 alt-8 = 'workspace 8'
 alt-9 = 'workspace 9'
+alt-0 = 'workspace 0'
 
-# ── Move window to workspace: ⌥ + Shift + 1-9 ────────────────────────────
-# (mirrors Hyprland: SUPER + SHIFT + 1-9)
+# ── Move window to workspace: ⌥ + Shift + 0-9 ────────────────────────────
+# (mirrors Hyprland: SUPER + SHIFT + 0-9)
 alt-shift-1 = 'move-node-to-workspace 1'
 alt-shift-2 = 'move-node-to-workspace 2'
 alt-shift-3 = 'move-node-to-workspace 3'
@@ -410,6 +411,7 @@ alt-shift-6 = 'move-node-to-workspace 6'
 alt-shift-7 = 'move-node-to-workspace 7'
 alt-shift-8 = 'move-node-to-workspace 8'
 alt-shift-9 = 'move-node-to-workspace 9'
+alt-shift-0 = 'move-node-to-workspace 0'
 
 # ── Focus: ⌥ + h/j/k/l ───────────────────────────────────────────────────
 # (mirrors Hyprland: SUPER + h/j/k/l)
@@ -652,7 +654,7 @@ COLORS_EOF
 #!/usr/bin/env bash
 source "$CONFIG_DIR/colors.sh"
 
-for sid in 1 2 3 4 5 6 7 8 9; do
+for sid in 1 2 3 4 5 6 7 8 9 0; do
   sketchybar --add item space.$sid left \
     --set space.$sid \
       icon="$sid" \
@@ -763,7 +765,7 @@ get_space_label() {
 highlight_space() {
   local focused="$1"
 
-  for SID in 1 2 3 4 5 6 7 8 9; do
+  for SID in 1 2 3 4 5 6 7 8 9 0; do
     local name="space.$SID"
     local label
     label=$(get_space_label "$SID")
