@@ -29,6 +29,7 @@ header()  { echo -e "\n${BOLD}$*${RESET}"; }
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BACKUP_DIR="$HOME/.omarchy-macos-backup"
 AEROSPACE_CFG="$HOME/.aerospace.toml"
+AEROSPACE_DIR="$HOME/.config/aerospace"
 SKHD_DIR="$HOME/.config/skhd"
 SKHD_CFG="$SKHD_DIR/skhdrc"
 SKETCHY_DIR="$HOME/.config/sketchybar"
@@ -64,6 +65,7 @@ cmd_install() {
 
   header "Writing configuration files..."
   write_aerospace_config
+  write_goto_space_helper
   write_skhd_config
   write_sketchybar_config
   write_borders_config
@@ -120,6 +122,7 @@ cmd_revert() {
 
   header "Removing configuration files..."
   rm -f "$AEROSPACE_CFG"
+  rm -rf "$AEROSPACE_DIR"
   rm -rf "$SKHD_DIR"
   rm -rf "$SKETCHY_DIR"
   rm -rf "$BORDERS_DIR"
@@ -388,30 +391,30 @@ outer.right      = 8
 [mode.main.binding]
 
 # ── Workspace switching: ⌥ + 0-9 ─────────────────────────────────────────
-# (mirrors Hyprland: SUPER + 0-9)
-alt-1 = 'workspace 1'
-alt-2 = 'workspace 2'
-alt-3 = 'workspace 3'
-alt-4 = 'workspace 4'
-alt-5 = 'workspace 5'
-alt-6 = 'workspace 6'
-alt-7 = 'workspace 7'
-alt-8 = 'workspace 8'
-alt-9 = 'workspace 9'
-alt-0 = 'workspace 0'
+# Per-monitor spaces: key N on display D resolves to workspace "DN"
+# (e.g. monitor 2 + ⌥+3 = workspace "23"). See goto_space.sh.
+alt-1 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 1'
+alt-2 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 2'
+alt-3 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 3'
+alt-4 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 4'
+alt-5 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 5'
+alt-6 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 6'
+alt-7 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 7'
+alt-8 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 8'
+alt-9 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 9'
+alt-0 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 0'
 
 # ── Move window to workspace: ⌥ + Shift + 0-9 ────────────────────────────
-# (mirrors Hyprland: SUPER + SHIFT + 0-9)
-alt-shift-1 = 'move-node-to-workspace 1'
-alt-shift-2 = 'move-node-to-workspace 2'
-alt-shift-3 = 'move-node-to-workspace 3'
-alt-shift-4 = 'move-node-to-workspace 4'
-alt-shift-5 = 'move-node-to-workspace 5'
-alt-shift-6 = 'move-node-to-workspace 6'
-alt-shift-7 = 'move-node-to-workspace 7'
-alt-shift-8 = 'move-node-to-workspace 8'
-alt-shift-9 = 'move-node-to-workspace 9'
-alt-shift-0 = 'move-node-to-workspace 0'
+alt-shift-1 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 1 --move'
+alt-shift-2 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 2 --move'
+alt-shift-3 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 3 --move'
+alt-shift-4 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 4 --move'
+alt-shift-5 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 5 --move'
+alt-shift-6 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 6 --move'
+alt-shift-7 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 7 --move'
+alt-shift-8 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 8 --move'
+alt-shift-9 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 9 --move'
+alt-shift-0 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 0 --move'
 
 # ── Focus: ⌥ + h/j/k/l ───────────────────────────────────────────────────
 # (mirrors Hyprland: SUPER + h/j/k/l)
@@ -469,38 +472,40 @@ alt-ctrl-shift-l = 'move-node-to-monitor right'
 
 # ── App → workspace assignments ───────────────────────────────────────────
 
+# App-assignment rules default to monitor 0's spaces ("0N"). If a second
+# monitor is attached, move the app to <monitor><N> manually after launch.
 [[on-window-detected]]
 if.app-name-regex-substring = 'Google Chrome|Chrome'
 if.window-title-regex-substring = 'Gmail'
-run = ['move-node-to-workspace 1', 'workspace 1']
+run = ['move-node-to-workspace 01', 'workspace 01']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Messages'
-run = ['move-node-to-workspace 2', 'workspace 2']
+run = ['move-node-to-workspace 02', 'workspace 02']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Signal'
-run = ['move-node-to-workspace 2', 'workspace 2']
+run = ['move-node-to-workspace 02', 'workspace 02']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Spotify|Music'
-run = ['move-node-to-workspace 3', 'workspace 3']
+run = ['move-node-to-workspace 03', 'workspace 03']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Ghostty|WezTerm|Warp|iTerm2'
-run = ['move-node-to-workspace 4', 'workspace 4']
+run = ['move-node-to-workspace 04', 'workspace 04']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Zed|Antigravity'
-run = ['move-node-to-workspace 5', 'workspace 5']
+run = ['move-node-to-workspace 05', 'workspace 05']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Claude'
-run = ['move-node-to-workspace 6', 'workspace 6']
+run = ['move-node-to-workspace 06', 'workspace 06']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Steam'
-run = ['move-node-to-workspace 9', 'workspace 9']
+run = ['move-node-to-workspace 09', 'workspace 09']
 
 # [[on-window-detected]]
 # if.app-name-regex-substring = 'slack|discord'
@@ -508,6 +513,54 @@ run = ['move-node-to-workspace 9', 'workspace 9']
 AEROSPACE_EOF
 
   success "Aerospace config written to $AEROSPACE_CFG"
+}
+
+# =============================================================================
+# GOTO_SPACE HELPER
+# Resolves ⌥+N to workspace "${display_id}${N}" so each monitor gets its
+# own 10 workspaces. Invoked from aerospace bindings via exec-and-forget.
+# =============================================================================
+write_goto_space_helper() {
+  info "Writing goto_space helper..."
+  mkdir -p "$AEROSPACE_DIR"
+
+  cat > "$AEROSPACE_DIR/goto_space.sh" << 'GOTO_SPACE_EOF'
+#!/usr/bin/env bash
+# Resolve a per-monitor workspace target and act on it.
+#
+# Usage:
+#   goto_space.sh <key>          # switch to workspace for current monitor + key
+#   goto_space.sh <key> --move   # move focused window to that workspace
+#
+# <key> is 0-9. Workspace names are `${display_id}${key}` where display_id is
+# the 0-based monitor index (aerospace's monitor id minus 1).
+
+set -euo pipefail
+
+KEY="${1:?usage: goto_space.sh <0-9> [--move]}"
+ACTION="${2:-focus}"
+
+if ! [[ "$KEY" =~ ^[0-9]$ ]]; then
+  echo "goto_space.sh: key must be 0-9 (got: $KEY)" >&2
+  exit 1
+fi
+
+MONITOR_ID=$(aerospace list-monitors --focused --format '%{monitor-id}')
+DISPLAY_ID=$((MONITOR_ID - 1))
+TARGET="${DISPLAY_ID}${KEY}"
+
+case "$ACTION" in
+  --move)
+    aerospace move-node-to-workspace "$TARGET"
+    ;;
+  focus|*)
+    aerospace workspace "$TARGET"
+    ;;
+esac
+GOTO_SPACE_EOF
+
+  chmod +x "$AEROSPACE_DIR/goto_space.sh"
+  success "goto_space helper written to $AEROSPACE_DIR/goto_space.sh"
 }
 
 # =============================================================================
@@ -623,6 +676,7 @@ sketchybar --default \
 # ── Load items ────────────────────────────────────────────────────────────
 source "$CONFIG_DIR/items/spaces.sh"
 source "$CONFIG_DIR/items/front_app.sh"
+source "$CONFIG_DIR/items/monitor.sh"
 
 # ── Finalise ──────────────────────────────────────────────────────────────
 sketchybar --update
@@ -700,6 +754,25 @@ sketchybar --add item front_app left \
   --subscribe front_app front_app_switched
 FRONTAPP_ITEM_EOF
 
+  # ── Monitor indicator (0-based display id) ─────────────────────────────
+  cat > "$SKETCHY_DIR/items/monitor.sh" << 'MONITOR_ITEM_EOF'
+#!/usr/bin/env bash
+source "$CONFIG_DIR/colors.sh"
+
+sketchybar --add item monitor right \
+  --set monitor \
+    icon.drawing=off \
+    label="0" \
+    label.font="SF Pro:Semibold:13.0" \
+    label.color=$PEACH \
+    background.drawing=on \
+    background.color=$ITEM_BG \
+    background.corner_radius=6 \
+    background.height=24 \
+    padding_left=6 \
+    padding_right=6
+MONITOR_ITEM_EOF
+
   # ── Right-side items: wifi, battery, clock ─────────────────────────────
   cat > "$SKETCHY_DIR/items/wifi.sh" << 'WIFI_ITEM_EOF'
 #!/usr/bin/env bash
@@ -742,37 +815,57 @@ CLOCK_ITEM_EOF
 
   cat > "$SKETCHY_DIR/plugins/spaces.sh" << 'SPACES_PLUGIN_EOF'
 #!/usr/bin/env bash
-# Usage: source "$CONFIG_DIR/plugins/spaces.sh" && highlight_space <workspace_number>
-# Sets the given space as focused and all others as unfocused.
+# Usage: source "$CONFIG_DIR/plugins/spaces.sh" && highlight_space <focused_workspace>
+#
+# Per-monitor spaces: workspace names are "${display_id}${key}" (e.g. "23"
+# for monitor 2, key 3). The 10 bar slots (space.0 .. space.9) reflect the
+# workspaces for the currently focused monitor; the "monitor" indicator on
+# the right shows the 0-based display id.
 
 source "$CONFIG_DIR/colors.sh"
 
 ALIAS_FILE="$HOME/.config/sketchybar/space_aliases"
 
 highlight_space() {
-  local focused="$1"
+  local focused="$1"  # full workspace name, e.g. "23", or empty
+  local monitor key
+  if [[ "$focused" =~ ^[0-9][0-9]$ ]]; then
+    monitor="${focused:0:1}"
+    key="${focused:1:1}"
+  else
+    # Fall back to asking aerospace directly.
+    local mid
+    mid=$(aerospace list-monitors --focused --format '%{monitor-id}' 2>/dev/null)
+    monitor=$((mid - 1))
+    local ws
+    ws=$(aerospace list-workspaces --focused 2>/dev/null | head -1)
+    key="${ws:1:1}"
+    focused="$ws"
+  fi
 
   # One aerospace call for all windows, grouped by workspace.
   local windows
   windows=$(aerospace list-windows --all --format '%{workspace}|%{app-name}' 2>/dev/null)
 
-  # Build a single batched sketchybar invocation (fork/socket overhead is the
-  # dominant cost; one chained call is ~30x faster than per-space calls).
+  # Build a single batched sketchybar invocation.
   local args=()
-  for SID in 1 2 3 4 5 6 7 8 9 0; do
-    local name="space.$SID"
+  args+=(--set monitor label="$monitor")
+
+  for KEY in 1 2 3 4 5 6 7 8 9 0; do
+    local ws_name="${monitor}${KEY}"
+    local name="space.$KEY"
     local label alias
-    alias=$(grep "^${SID}=" "$ALIAS_FILE" 2>/dev/null | cut -d= -f2-)
+    alias=$(grep "^${ws_name}=" "$ALIAS_FILE" 2>/dev/null | cut -d= -f2-)
     if [ -n "$alias" ]; then
       label="$alias"
     else
       label=$(printf '%s\n' "$windows" \
-        | awk -F'|' -v s="$SID" '$1==s{print $2}' \
+        | awk -F'|' -v s="$ws_name" '$1==s{print $2}' \
         | sort -u | paste -sd "," - | sed 's/,/, /g')
     fi
     local has_label=$( [ -n "$label" ] && echo on || echo off )
 
-    if [ "$SID" = "$focused" ]; then
+    if [ "$KEY" = "$key" ]; then
       args+=(--set "$name"
         icon.font="SF Pro:Bold:12.0"
         icon.color=$BLUE
