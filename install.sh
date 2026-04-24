@@ -40,6 +40,11 @@ BAR_TOGGLE_SRC="$SKETCHY_DIR/plugins/bar_toggle.swift"
 BAR_TOGGLE_LABEL="com.omarchy-macos.bar_toggle"
 BAR_TOGGLE_PLIST="$HOME/Library/LaunchAgents/$BAR_TOGGLE_LABEL.plist"
 
+CHROME_REHOME_BIN="$SKETCHY_DIR/plugins/chrome_rehome"
+CHROME_REHOME_SRC="$SKETCHY_DIR/plugins/chrome_rehome.swift"
+CHROME_REHOME_LABEL="com.omarchy-macos.chrome_rehome"
+CHROME_REHOME_PLIST="$HOME/Library/LaunchAgents/$CHROME_REHOME_LABEL.plist"
+
 INSTALLED_MARKER="$BACKUP_DIR/.installed"
 
 # =============================================================================
@@ -70,6 +75,7 @@ cmd_install() {
   write_sketchybar_config
   write_borders_config
   write_bar_toggle_daemon
+  write_chrome_rehome_daemon
 
   header "Tuning macOS for instant window movement..."
   defaults write NSGlobalDomain NSAutomaticWindowAnimationsEnabled -bool false
@@ -127,6 +133,7 @@ cmd_revert() {
   rm -rf "$SKETCHY_DIR"
   rm -rf "$BORDERS_DIR"
   rm -f "$BAR_TOGGLE_PLIST"
+  rm -f "$CHROME_REHOME_PLIST"
   success "Config files removed"
 
   header "Restoring backups..."
@@ -308,12 +315,20 @@ start_services() {
   launchctl load "$BAR_TOGGLE_PLIST" 2>/dev/null || \
     warn "Could not load bar_toggle LaunchAgent"
 
+  info "Starting chrome_rehome daemon..."
+  launchctl unload "$CHROME_REHOME_PLIST" 2>/dev/null || true
+  launchctl load "$CHROME_REHOME_PLIST" 2>/dev/null || \
+    warn "Could not load chrome_rehome LaunchAgent"
+
   success "Services started"
 }
 
 stop_services() {
   if [[ -f "$BAR_TOGGLE_PLIST" ]]; then
     launchctl unload "$BAR_TOGGLE_PLIST" 2>/dev/null && info "  stopped bar_toggle" || true
+  fi
+  if [[ -f "$CHROME_REHOME_PLIST" ]]; then
+    launchctl unload "$CHROME_REHOME_PLIST" 2>/dev/null && info "  stopped chrome_rehome" || true
   fi
   for svc in borders sketchybar aerospace; do
     if brew services list | grep -q "^$svc"; then
@@ -475,8 +490,7 @@ alt-ctrl-shift-l = 'move-node-to-monitor right'
 # App-assignment rules default to monitor 0's spaces ("0N"). If a second
 # monitor is attached, move the app to <monitor><N> manually after launch.
 [[on-window-detected]]
-if.app-name-regex-substring = 'Google Chrome|Chrome'
-if.window-title-regex-substring = 'Gmail'
+if.app-name-regex-substring = 'Gmail'
 run = ['move-node-to-workspace 01', 'workspace 01']
 
 [[on-window-detected]]
@@ -1065,6 +1079,204 @@ BAR_TOGGLE_SWIFT_EOF
 BAR_TOGGLE_PLIST_EOF
 
   success "bar_toggle daemon written"
+}
+
+# =============================================================================
+# CHROME REHOME DAEMON
+#
+# Swift binary that subscribes to Chrome's AXWindowCreated events and moves
+# each newly-opened window to the first empty workspace on the monitor where
+# Chrome created it. If every workspace on that monitor is occupied, the
+# window stays put. Aerospace's on-window-detected.run accepts only action
+# commands (no shell-out), so this lives out-of-band as a LaunchAgent.
+# =============================================================================
+write_chrome_rehome_daemon() {
+  info "Writing chrome_rehome daemon..."
+  mkdir -p "$SKETCHY_DIR/plugins"
+
+  cat > "$CHROME_REHOME_SRC" << 'CHROME_REHOME_SWIFT_EOF'
+import AppKit
+import ApplicationServices
+
+@_silgen_name("_AXUIElementGetWindow")
+func _AXUIElementGetWindow(_ element: AXUIElement, _ windowId: UnsafeMutablePointer<CGWindowID>) -> AXError
+
+let aerospacePath = "/opt/homebrew/bin/aerospace"
+let chromeBundleID = "com.google.Chrome"
+let scanOrder: [String] = ["1","2","3","4","5","6","7","8","9","0"]
+
+func log(_ msg: String) {
+    let stamp = ISO8601DateFormatter().string(from: Date())
+    FileHandle.standardOutput.write(Data("[\(stamp)] \(msg)\n".utf8))
+}
+
+@discardableResult
+func sh(_ args: [String]) -> String {
+    let p = Process()
+    p.launchPath = aerospacePath
+    p.arguments = args
+    let out = Pipe()
+    p.standardOutput = out
+    p.standardError = FileHandle.nullDevice
+    do { try p.run() } catch {
+        log("aerospace launch failed: \(error)")
+        return ""
+    }
+    p.waitUntilExit()
+    return String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+}
+
+func firstEmptyOnMonitor(_ monitor: Character, skip currentWs: String) -> String? {
+    for key in scanOrder {
+        let ws = "\(monitor)\(key)"
+        if ws == currentWs { continue }
+        let out = sh(["list-windows", "--workspace", ws, "--format", "%{window-id}"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if out.isEmpty { return ws }
+    }
+    return nil
+}
+
+func handleNewWindow(_ wid: CGWindowID) {
+    for attempt in 0..<5 {
+        let listing = sh(["list-windows", "--all", "--format", "%{window-id}|%{workspace}|%{app-name}"])
+        var currentWs: String? = nil
+        struct Row { let id: UInt32; let ws: String; let app: String }
+        var rows: [Row] = []
+        for line in listing.split(separator: "\n") {
+            let parts = line.split(separator: "|", maxSplits: 2)
+            guard parts.count == 3, let id = UInt32(parts[0]) else { continue }
+            let row = Row(id: id, ws: String(parts[1]), app: String(parts[2]))
+            rows.append(row)
+            if id == wid { currentWs = row.ws }
+        }
+        guard let ws = currentWs else {
+            if attempt < 4 { Thread.sleep(forTimeInterval: 0.04) }
+            continue
+        }
+        let siblingChromeOnWs = rows.contains {
+            $0.ws == ws && $0.id != wid && $0.app == "Google Chrome"
+        }
+        if siblingChromeOnWs {
+            log("Chrome window \(wid) on \(ws): already has Chrome here, leaving in place")
+            return
+        }
+        guard let monitor = ws.first else { return }
+        if let target = firstEmptyOnMonitor(monitor, skip: ws) {
+            log("Chrome window \(wid) alone on \(ws) -> \(target)")
+            sh(["move-node-to-workspace", "--window-id", "\(wid)", target])
+            sh(["workspace", target])
+        } else {
+            log("Chrome window \(wid) alone on \(ws): monitor full, leaving in place")
+        }
+        return
+    }
+    log("Chrome window \(wid) never appeared in aerospace listing")
+}
+
+let axCallback: AXObserverCallback = { _, element, _, _ in
+    var wid: CGWindowID = 0
+    if _AXUIElementGetWindow(element, &wid) == .success {
+        DispatchQueue.global().async { handleNewWindow(wid) }
+    }
+}
+
+var currentObserver: AXObserver?
+var currentPid: pid_t = 0
+
+func detachObserver() {
+    if let obs = currentObserver {
+        CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(obs), .defaultMode)
+    }
+    currentObserver = nil
+    currentPid = 0
+}
+
+func attachObserver(_ pid: pid_t) {
+    detachObserver()
+    var observer: AXObserver?
+    let createResult = AXObserverCreate(pid, axCallback, &observer)
+    guard createResult == .success, let obs = observer else {
+        log("AXObserverCreate failed for pid \(pid): \(createResult.rawValue)")
+        return
+    }
+    let app = AXUIElementCreateApplication(pid)
+    let addResult = AXObserverAddNotification(obs, app, kAXWindowCreatedNotification as CFString, nil)
+    if addResult != .success {
+        log("AXObserverAddNotification failed for pid \(pid): \(addResult.rawValue)")
+        return
+    }
+    CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(obs), .defaultMode)
+    currentObserver = obs
+    currentPid = pid
+    log("attached AX observer to Chrome pid \(pid)")
+}
+
+let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+let trusted = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
+log("AXIsProcessTrusted: \(trusted)")
+
+if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == chromeBundleID }) {
+    attachObserver(app.processIdentifier)
+}
+
+NSWorkspace.shared.notificationCenter.addObserver(
+    forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: nil
+) { notif in
+    if let app = notif.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+       app.bundleIdentifier == chromeBundleID {
+        attachObserver(app.processIdentifier)
+    }
+}
+
+NSWorkspace.shared.notificationCenter.addObserver(
+    forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: nil
+) { notif in
+    if let app = notif.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+       app.processIdentifier == currentPid {
+        log("Chrome terminated, detaching observer")
+        detachObserver()
+    }
+}
+
+log("chrome_rehome started")
+RunLoop.main.run()
+CHROME_REHOME_SWIFT_EOF
+
+  if ! command -v swiftc &>/dev/null; then
+    warn "swiftc not found — install Xcode Command Line Tools (xcode-select --install)"
+    return 1
+  fi
+
+  info "Compiling chrome_rehome..."
+  swiftc -O "$CHROME_REHOME_SRC" -o "$CHROME_REHOME_BIN"
+  chmod +x "$CHROME_REHOME_BIN"
+
+  mkdir -p "$HOME/Library/LaunchAgents"
+  cat > "$CHROME_REHOME_PLIST" << CHROME_REHOME_PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$CHROME_REHOME_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$CHROME_REHOME_BIN</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/chrome_rehome.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/chrome_rehome.log</string>
+</dict>
+</plist>
+CHROME_REHOME_PLIST_EOF
+
+  success "chrome_rehome daemon written"
 }
 
 # =============================================================================
