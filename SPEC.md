@@ -29,11 +29,11 @@ Workspaces 1–10 with automatic app assignment:
 | Workspace | App(s) |
 |---|---|
 | 1 | Gmail (Chrome window) |
-| 2 | Messages, Signal |
+| 2 (Msg) | Messages, Signal |
 | 3 | Spotify, Music |
-| 4 | Ghostty, WezTerm, Warp, iTerm |
-| 5 | Zed, VS Code, Antigravity |
-| 6 | Claude desktop |
+| 4 (Terms) | Ghostty, WezTerm, Warp, iTerm |
+| 5 (Editors) | Zed, VS Code, Antigravity |
+| 6 (Agents) | Claude desktop, Gemini |
 | 9 | Steam |
 
 ## Key Behaviors

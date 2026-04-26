@@ -514,7 +514,7 @@ if.app-name-regex-substring = 'Zed|Antigravity'
 run = ['move-node-to-workspace 05', 'workspace 05']
 
 [[on-window-detected]]
-if.app-name-regex-substring = 'Claude'
+if.app-name-regex-substring = 'Claude|Gemini'
 run = ['move-node-to-workspace 06', 'workspace 06']
 
 [[on-window-detected]]
@@ -716,6 +716,51 @@ export YELLOW=0xfff9e2af          # yellow
 export RED=0xfff38ba8             # red
 export PEACH=0xfffab387           # peach
 COLORS_EOF
+
+  # ── Space aliases ───────────────────────────────────────────────────────
+  # Labels apply across the single-digit monitor prefix used by workspace IDs.
+  cat > "$SKETCHY_DIR/space_aliases" << 'SPACE_ALIASES_EOF'
+02=Msg
+04=Terms
+05=Editors
+06=Agents
+12=Msg
+14=Terms
+15=Editors
+16=Agents
+22=Msg
+24=Terms
+25=Editors
+26=Agents
+32=Msg
+34=Terms
+35=Editors
+36=Agents
+42=Msg
+44=Terms
+45=Editors
+46=Agents
+52=Msg
+54=Terms
+55=Editors
+56=Agents
+62=Msg
+64=Terms
+65=Editors
+66=Agents
+72=Msg
+74=Terms
+75=Editors
+76=Agents
+82=Msg
+84=Terms
+85=Editors
+86=Agents
+92=Msg
+94=Terms
+95=Editors
+96=Agents
+SPACE_ALIASES_EOF
 
   # ── Spaces (workspace indicators) ────────────────────────────────────────
   cat > "$SKETCHY_DIR/items/spaces.sh" << 'SPACES_ITEM_EOF'
