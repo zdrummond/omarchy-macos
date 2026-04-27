@@ -922,29 +922,36 @@ highlight_space() {
         | awk -F'|' -v s="$ws_name" '$1==s{print $2}' \
         | sort -u | paste -sd "," - | sed 's/,/, /g')
     fi
-    local has_label=$( [ -n "$label" ] && echo on || echo off )
+    local has_content="$label"
+    local active_label_color=$TEXT
+    local idle_label_color=$SUBTEXT
+    if [ -z "$has_content" ]; then
+      label="[empty]"
+      active_label_color=$YELLOW
+      idle_label_color=$YELLOW
+    fi
 
     if [ "$KEY" = "$key" ]; then
       args+=(--set "$name"
         icon.font="SF Pro:Bold:12.0"
         icon.color=$BLUE
         label="$label"
-        label.drawing=$has_label
+        label.drawing=on
         label.font="SF Pro:Bold:12.0"
-        label.color=$TEXT
+        label.color=$active_label_color
         background.color=$ITEM_BG_ACTIVE
         background.border_color=$BLUE
         background.border_width=2)
     else
       local idle_icon_color=$SUBTEXT
-      [ -n "$label" ] && idle_icon_color=$MAUVE
+      [ -n "$has_content" ] && idle_icon_color=$MAUVE
       args+=(--set "$name"
         icon.font="SF Pro:Regular:12.0"
         icon.color=$idle_icon_color
         label="$label"
-        label.drawing=$has_label
+        label.drawing=on
         label.font="SF Pro:Regular:12.0"
-        label.color=$SUBTEXT
+        label.color=$idle_label_color
         background.color=0x00000000
         background.border_color=0x00000000
         background.border_width=0)
