@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Manually paint the space highlight on sketchybar. Workspace names follow
-# the per-monitor scheme: "${display_id}${key}" (e.g. "03", "23").
+# the per-monitor scheme: "${display_slot}${key}" (e.g. "03", "23").
 #
 # Usage:
 #   highlight_space.sh <NN>    # highlight workspace NN directly (e.g. 03, 23)
@@ -18,6 +18,7 @@ if [ -z "${1:-}" ]; then
 fi
 
 export CONFIG_DIR="$HOME/.config/sketchybar"
+source "$HOME/.config/aerospace/omarchy_space_state.sh"
 source "$CONFIG_DIR/plugins/spaces.sh"
 
 arg="$1"
@@ -29,9 +30,11 @@ case "$arg" in
     highlight_space "$arg"
     ;;
   [0-9])
-    mid=$(aerospace list-monitors --focused --format '%{monitor-id}')
-    display=$((mid - 1))
-    highlight_space "${display}${arg}"
+    target=$(omarchy_workspace_for_key "$arg") || {
+      echo "highlight_space.sh: AeroSpace is not reachable" >&2
+      exit 1
+    }
+    highlight_space "$target"
     ;;
   *)
     echo "highlight_space.sh: invalid arg '$arg' (expected NN, N, or 'clear')" >&2

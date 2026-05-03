@@ -4,6 +4,7 @@
 #
 # Usage:
 #   ./install.sh install   — install and configure everything
+#   ./install.sh refresh   — rewrite generated configs without reinstalling brew packages
 #   ./install.sh revert    — undo everything, restore previous state
 #   ./install.sh status    — show what's installed and running
 #
@@ -70,6 +71,7 @@ cmd_install() {
 
   header "Writing configuration files..."
   write_aerospace_config
+  write_space_state_helper
   write_goto_space_helper
   write_skhd_config
   write_sketchybar_config
@@ -109,6 +111,57 @@ cmd_install() {
   echo ""
   warn "You may need to grant Accessibility permissions to Aerospace and skhd"
   warn "in System Settings → Privacy & Security → Accessibility"
+}
+
+# =============================================================================
+# REFRESH GENERATED CONFIG
+# =============================================================================
+cmd_refresh() {
+  header "omarchy-macos config refresh"
+
+  check_prerequisites
+
+  header "Rewriting generated configuration files..."
+  write_aerospace_config
+  write_space_state_helper
+  write_goto_space_helper
+  write_skhd_config
+  write_sketchybar_config
+  write_borders_config
+  write_bar_toggle_daemon
+  write_chrome_rehome_daemon
+
+  header "Restarting services..."
+  stop_services
+  start_services
+
+  echo ""
+  success "Configuration refreshed."
+  echo "Run './install.sh repair-spaces' once after AeroSpace is healthy to move windows off detached monitor workspaces."
+}
+
+# =============================================================================
+# REPAIR DETACHED MONITOR WORKSPACES
+# =============================================================================
+cmd_repair_spaces() {
+  header "omarchy-macos repair spaces"
+
+  local helper="$AEROSPACE_DIR/omarchy_space_state.sh"
+  if [[ ! -f "$helper" ]]; then
+    error "Missing $helper. Run './install.sh refresh' first."
+    exit 1
+  fi
+
+  # shellcheck source=/dev/null
+  source "$helper"
+
+  if ! omarchy_aerospace_available; then
+    error "AeroSpace is not reachable; no spaces were changed."
+    exit 1
+  fi
+
+  omarchy_repair_detached_monitor_workspaces
+  success "Detached monitor workspaces repaired."
 }
 
 # =============================================================================
@@ -292,9 +345,12 @@ brew_uninstall() {
 # =============================================================================
 start_services() {
   info "Starting aerospace..."
-  brew services start nikitabobko/tap/aerospace 2>/dev/null || \
-    brew services start aerospace 2>/dev/null || \
-    warn "Could not auto-start aerospace — launch manually from Applications"
+  if [[ -d /Applications/AeroSpace.app ]]; then
+    open -gj -a /Applications/AeroSpace.app 2>/dev/null || \
+      warn "Could not auto-start aerospace — launch /Applications/AeroSpace.app manually"
+  else
+    warn "Could not find /Applications/AeroSpace.app — reinstall aerospace"
+  fi
 
   info "Starting skhd..."
   skhd --start-service 2>/dev/null || \
@@ -514,7 +570,11 @@ if.app-name-regex-substring = 'Zed|Antigravity'
 run = ['move-node-to-workspace 05', 'workspace 05']
 
 [[on-window-detected]]
-if.app-name-regex-substring = 'Claude|Gemini'
+if.app-id = 'com.anthropic.claudefordesktop'
+run = ['move-node-to-workspace 06', 'workspace 06']
+
+[[on-window-detected]]
+if.app-id = 'com.google.GeminiMacOS'
 run = ['move-node-to-workspace 06', 'workspace 06']
 
 [[on-window-detected]]
@@ -530,8 +590,116 @@ AEROSPACE_EOF
 }
 
 # =============================================================================
+# SPACE STATE HELPER
+# Shared workspace/monitor helpers for Aerospace and SketchyBar scripts.
+# =============================================================================
+write_space_state_helper() {
+  info "Writing space state helper..."
+  mkdir -p "$AEROSPACE_DIR"
+
+  cat > "$AEROSPACE_DIR/omarchy_space_state.sh" << 'SPACE_STATE_EOF'
+#!/usr/bin/env bash
+# Shared helpers for monitor-scoped workspace names.
+#
+# Workspace names are "${slot}${key}" where slot is the focused monitor's
+# current attachment-order index. This deliberately does not use
+# "monitor-id - 1": after unplug/replug macOS and AeroSpace may keep assigning
+# non-1 monitor ids even when only one physical display remains.
+
+OMARCHY_AEROSPACE_BIN="${OMARCHY_AEROSPACE_BIN:-aerospace}"
+
+omarchy_aerospace_available() {
+  "$OMARCHY_AEROSPACE_BIN" list-monitors --format '%{monitor-id}' >/dev/null 2>&1
+}
+
+omarchy_focused_monitor_slot() {
+  local focused_id
+  focused_id=$("$OMARCHY_AEROSPACE_BIN" list-monitors --focused --format '%{monitor-id}' 2>/dev/null | head -n 1) || return 1
+  [ -n "$focused_id" ] || return 1
+
+  local slot=0 monitor_id
+  while IFS= read -r monitor_id; do
+    [ -n "$monitor_id" ] || continue
+    if [ "$monitor_id" = "$focused_id" ]; then
+      printf '%s\n' "$slot"
+      return 0
+    fi
+    slot=$((slot + 1))
+  done < <("$OMARCHY_AEROSPACE_BIN" list-monitors --format '%{monitor-id}' 2>/dev/null)
+
+  return 1
+}
+
+omarchy_focused_workspace() {
+  "$OMARCHY_AEROSPACE_BIN" list-workspaces --focused 2>/dev/null | head -n 1
+}
+
+omarchy_workspace_for_key() {
+  local key="$1"
+  local slot
+  slot=$(omarchy_focused_monitor_slot) || return 1
+  printf '%s%s\n' "$slot" "$key"
+}
+
+omarchy_attached_monitor_count() {
+  local count
+  count=$("$OMARCHY_AEROSPACE_BIN" list-monitors --format '%{monitor-id}' 2>/dev/null | awk 'NF{count++} END{print count+0}') || return 1
+  [ "$count" -gt 0 ] || return 1
+  printf '%s\n' "$count"
+}
+
+omarchy_is_active_slot() {
+  local slot="$1"
+  local count
+  count=$(omarchy_attached_monitor_count) || return 1
+  [[ "$slot" =~ ^[0-9]+$ ]] || return 1
+  [ "$slot" -lt "$count" ]
+}
+
+omarchy_repair_detached_monitor_workspaces() {
+  local count
+  count=$(omarchy_attached_monitor_count) || return 1
+
+  local rows line window_id workspace slot key target
+  rows=$("$OMARCHY_AEROSPACE_BIN" list-windows --all --format '%{window-id}|%{workspace}' 2>/dev/null) || return 1
+  while IFS= read -r line; do
+    IFS='|' read -r window_id workspace <<< "$line"
+    [[ "$window_id" =~ ^[0-9]+$ ]] || continue
+    [[ "$workspace" =~ ^[0-9][0-9]$ ]] || continue
+
+    slot="${workspace:0:1}"
+    key="${workspace:1:1}"
+    if [ "$slot" -ge "$count" ]; then
+      target="0${key}"
+      [ "$target" = "$workspace" ] && continue
+      "$OMARCHY_AEROSPACE_BIN" move-node-to-workspace --window-id "$window_id" "$target" >/dev/null 2>&1 || true
+    fi
+  done <<< "$rows"
+}
+SPACE_STATE_EOF
+
+  chmod +x "$AEROSPACE_DIR/omarchy_space_state.sh"
+  cat > "$AEROSPACE_DIR/repair_spaces.sh" << 'REPAIR_SPACES_EOF'
+#!/usr/bin/env bash
+# Move windows from detached monitor-prefixed workspaces back to slot 0.
+
+set -euo pipefail
+
+source "$HOME/.config/aerospace/omarchy_space_state.sh"
+
+omarchy_repair_detached_monitor_workspaces || {
+  echo "repair_spaces.sh: AeroSpace is not reachable; no spaces were changed" >&2
+  exit 1
+}
+REPAIR_SPACES_EOF
+
+  chmod +x "$AEROSPACE_DIR/repair_spaces.sh"
+  success "space state helper written to $AEROSPACE_DIR/omarchy_space_state.sh"
+}
+
+# =============================================================================
 # GOTO_SPACE HELPER
-# Resolves ⌥+N to workspace "${display_id}${N}" so each monitor gets its
+# Resolves ⌥+N to workspace "${display_slot}${N}" so each monitor gets its
 # own 10 workspaces. Invoked from aerospace bindings via exec-and-forget.
 # =============================================================================
 write_goto_space_helper() {
@@ -546,10 +714,12 @@ write_goto_space_helper() {
 #   goto_space.sh <key>          # switch to workspace for current monitor + key
 #   goto_space.sh <key> --move   # move focused window to that workspace
 #
-# <key> is 0-9. Workspace names are `${display_id}${key}` where display_id is
-# the 0-based monitor index (aerospace's monitor id minus 1).
+# <key> is 0-9. Workspace names are `${display_slot}${key}` where display_slot
+# is the focused monitor's current attachment-order index.
 
 set -euo pipefail
+
+source "$HOME/.config/aerospace/omarchy_space_state.sh"
 
 KEY="${1:?usage: goto_space.sh <0-9> [--move]}"
 ACTION="${2:-focus}"
@@ -559,9 +729,12 @@ if ! [[ "$KEY" =~ ^[0-9]$ ]]; then
   exit 1
 fi
 
-MONITOR_ID=$(aerospace list-monitors --focused --format '%{monitor-id}')
-DISPLAY_ID=$((MONITOR_ID - 1))
-TARGET="${DISPLAY_ID}${KEY}"
+TARGET=$(omarchy_workspace_for_key "$KEY") || {
+  echo "goto_space.sh: AeroSpace is not reachable; refusing to switch spaces" >&2
+  exit 1
+}
+
+omarchy_repair_detached_monitor_workspaces || true
 
 case "$ACTION" in
   --move)
@@ -688,6 +861,10 @@ sketchybar --default \
   background.border_width=0
 
 # ── Load items ────────────────────────────────────────────────────────────
+for item in space.1 space.2 space.3 space.4 space.5 space.6 space.7 space.8 space.9 space.0 spaces_separator front_app monitor; do
+  sketchybar --remove "$item" >/dev/null 2>&1 || true
+done
+
 source "$CONFIG_DIR/items/spaces.sh"
 source "$CONFIG_DIR/items/front_app.sh"
 source "$CONFIG_DIR/items/monitor.sh"
@@ -876,12 +1053,13 @@ CLOCK_ITEM_EOF
 #!/usr/bin/env bash
 # Usage: source "$CONFIG_DIR/plugins/spaces.sh" && highlight_space <focused_workspace>
 #
-# Per-monitor spaces: workspace names are "${display_id}${key}" (e.g. "23"
+# Per-monitor spaces: workspace names are "${display_slot}${key}" (e.g. "23"
 # for monitor 2, key 3). The 10 bar slots (space.0 .. space.9) reflect the
 # workspaces for the currently focused monitor; the "monitor" indicator on
 # the right shows the 0-based display id.
 
 source "$CONFIG_DIR/colors.sh"
+source "$HOME/.config/aerospace/omarchy_space_state.sh"
 
 ALIAS_FILE="$HOME/.config/sketchybar/space_aliases"
 
@@ -892,19 +1070,27 @@ highlight_space() {
     monitor="${focused:0:1}"
     key="${focused:1:1}"
   else
-    # Fall back to asking aerospace directly.
-    local mid
-    mid=$(aerospace list-monitors --focused --format '%{monitor-id}' 2>/dev/null)
-    monitor=$((mid - 1))
+    monitor=$(omarchy_focused_monitor_slot) || {
+      sketchybar --set monitor label="AS?" >/dev/null 2>&1 || true
+      return 0
+    }
     local ws
-    ws=$(aerospace list-workspaces --focused 2>/dev/null | head -1)
+    ws=$(omarchy_focused_workspace)
     key="${ws:1:1}"
     focused="$ws"
   fi
 
+  if ! [[ "$monitor" =~ ^[0-9]+$ ]] || ! [[ "$key" =~ ^[0-9]$ ]]; then
+    sketchybar --set monitor label="AS?" >/dev/null 2>&1 || true
+    return 0
+  fi
+
   # One aerospace call for all windows, grouped by workspace.
   local windows
-  windows=$(aerospace list-windows --all --format '%{workspace}|%{app-name}' 2>/dev/null)
+  windows=$(aerospace list-windows --all --format '%{workspace}|%{app-name}' 2>/dev/null) || {
+    sketchybar --set monitor label="AS?" >/dev/null 2>&1 || true
+    return 0
+  }
 
   # Build a single batched sketchybar invocation.
   local args=()
@@ -975,8 +1161,12 @@ APP="${INFO}"
 if [ -z "$APP" ]; then
   APP=$(osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true' 2>/dev/null)
 fi
-WS=$(aerospace list-workspaces --focused 2>/dev/null | head -1)
-sketchybar --set "$NAME" label="$WS $APP"
+WS=$(omarchy_focused_workspace)
+if [[ "$WS" =~ ^[0-9][0-9]$ ]]; then
+  sketchybar --set "$NAME" label="$WS $APP"
+else
+  sketchybar --set "$NAME" label="AS? $APP"
+fi
 highlight_space "$WS"
 FRONTAPP_PLUGIN_EOF
 
@@ -1178,7 +1368,13 @@ func sh(_ args: [String]) -> String {
     return String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
 }
 
-func firstEmptyOnMonitor(_ monitor: Character, skip currentWs: String) -> String? {
+func activeMonitorSlotCount() -> Int {
+    let out = sh(["list-monitors", "--format", "%{monitor-id}"])
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    return out.split(separator: "\n").count
+}
+
+func firstEmptyOnMonitor(_ monitor: String, skip currentWs: String) -> String? {
     for key in scanOrder {
         let ws = "\(monitor)\(key)"
         if ws == currentWs { continue }
@@ -1214,12 +1410,15 @@ func handleNewWindow(_ wid: CGWindowID) {
             return
         }
         guard let monitor = ws.first else { return }
-        if let target = firstEmptyOnMonitor(monitor, skip: ws) {
+        let monitorSlot = Int(String(monitor)) ?? 0
+        let activeSlotCount = activeMonitorSlotCount()
+        let targetMonitor = monitorSlot < activeSlotCount ? String(monitor) : "0"
+        if let target = firstEmptyOnMonitor(targetMonitor, skip: ws) {
             log("Chrome window \(wid) alone on \(ws) -> \(target)")
             sh(["move-node-to-workspace", "--window-id", "\(wid)", target])
             sh(["workspace", target])
         } else {
-            log("Chrome window \(wid) alone on \(ws): monitor full, leaving in place")
+            log("Chrome window \(wid) alone on \(ws): monitor \(targetMonitor) full, leaving in place")
         }
         return
     }
@@ -1369,14 +1568,19 @@ usage() {
   echo -e "${BOLD}omarchy-macos${RESET} — Hyprland-style window management for macOS M1"
   echo ""
   echo "  ./install.sh install   install and configure all tools"
+  echo "  ./install.sh refresh   rewrite generated configs without reinstalling packages"
+  echo "  ./install.sh repair-spaces"
+  echo "                         move windows off detached monitor workspaces"
   echo "  ./install.sh revert    undo everything, restore previous state"
   echo "  ./install.sh status    show install and service status"
   echo ""
 }
 
 case "${1:-}" in
-  install) cmd_install ;;
-  revert)  cmd_revert  ;;
-  status)  cmd_status  ;;
-  *)       usage; exit 1 ;;
+  install)       cmd_install       ;;
+  refresh)       cmd_refresh       ;;
+  repair-spaces) cmd_repair_spaces ;;
+  revert)        cmd_revert        ;;
+  status)        cmd_status        ;;
+  *)             usage; exit 1     ;;
 esac
