@@ -409,6 +409,13 @@ start_services() {
   if [[ -d /Applications/AeroSpace.app ]]; then
     open -g -a /Applications/AeroSpace.app 2>/dev/null || \
       warn "Could not auto-start aerospace — launch /Applications/AeroSpace.app manually"
+    for _ in {1..20}; do
+      if aerospace list-monitors --format '%{monitor-id}' >/dev/null 2>&1; then
+        aerospace reload-config >/dev/null 2>&1 || true
+        break
+      fi
+      sleep 0.2
+    done
   else
     warn "Could not find /Applications/AeroSpace.app — reinstall aerospace"
   fi
@@ -522,10 +529,44 @@ check_tool() {
 # =============================================================================
 # AEROSPACE CONFIG
 # =============================================================================
+workspace_force_assignment_toml() {
+  local rows line monitor_id monitor_name
+  rows=$(aerospace list-monitors --format '%{monitor-id}|%{monitor-name}' 2>/dev/null || true)
+
+  local external_ids=()
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    monitor_id="${line%%|*}"
+    monitor_name="${line#*|}"
+    [ -n "$monitor_id" ] || continue
+    if [[ ! "$monitor_name" =~ [Bb]uilt.?in ]]; then
+      external_ids+=("$monitor_id")
+    fi
+  done <<< "$rows"
+
+  local slot key monitor_pattern fallback_pattern
+  printf '[workspace-to-monitor-force-assignment]\n'
+  for slot in 1 2 3; do
+    monitor_pattern="${external_ids[$((slot - 1))]:-$((slot + 1))}"
+    fallback_pattern="$monitor_pattern"
+    [ "$slot" = "1" ] && fallback_pattern="secondary"
+    for key in 0 1 2 3 4 5 6 7 8 9; do
+      if [ "$fallback_pattern" = "$monitor_pattern" ]; then
+        printf '"%s%s" = ["%s", "built-in", "main"]\n' "$slot" "$key" "$monitor_pattern"
+      else
+        printf '"%s%s" = ["%s", "%s", "built-in", "main"]\n' "$slot" "$key" "$fallback_pattern" "$monitor_pattern"
+      fi
+    done
+  done
+}
+
 write_aerospace_config() {
   info "Writing Aerospace config..."
 
-  cat > "$AEROSPACE_CFG" << 'AEROSPACE_EOF'
+  local workspace_force_assignments
+  workspace_force_assignments=$(workspace_force_assignment_toml)
+
+  cat > "$AEROSPACE_CFG" << AEROSPACE_EOF
 # =============================================================================
 # Aerospace — Omarchy-style tiling window manager config
 # Modifier key: ⌥ (Option/Alt) — your SUPER key
@@ -549,6 +590,12 @@ key-mapping.preset = 'qwerty'
 # Normalisation: flatten nested containers (keeps tree clean)
 enable-normalization-flatten-containers = true
 enable-normalization-opposite-orientation-for-nested-containers = true
+
+# ── Workspace monitor assignment ──────────────────────────────────────────
+# AeroSpace assigns empty workspaces to the main monitor by default. External
+# slot assignments make 10-39 native to up to three external displays without
+# forcing the built-in display back to a default slot-0 workspace.
+${workspace_force_assignments}
 
 # ── Appearance ─────────────────────────────────────────────────────────────
 [gaps]
@@ -744,16 +791,48 @@ omarchy_monitor_ids_by_slot() {
   printf '%s\n' "${built_in_ids[@]}" "${external_ids[@]}" | awk 'NF'
 }
 
+omarchy_slot_for_monitor_id() {
+  local target_id="$1"
+  [ -n "$target_id" ] || return 1
+
+  local slot=0 monitor_id
+  while IFS= read -r monitor_id; do
+    [ -n "$monitor_id" ] || continue
+    if [ "$monitor_id" = "$target_id" ]; then
+      printf '%s\n' "$slot"
+      return 0
+    fi
+    slot=$((slot + 1))
+  done < <(omarchy_monitor_ids_by_slot)
+
+  return 1
+}
+
 omarchy_focused_monitor_slot() {
   local focused_id
   focused_id=$("$OMARCHY_AEROSPACE_BIN" list-monitors --focused --format '%{monitor-id}' 2>/dev/null | head -n 1) || return 1
   [ -n "$focused_id" ] || return 1
 
+  omarchy_slot_for_monitor_id "$focused_id"
+}
+
+omarchy_mouse_monitor_slot() {
+  local mouse_id
+  mouse_id=$("$OMARCHY_AEROSPACE_BIN" list-monitors --mouse --format '%{monitor-id}' 2>/dev/null | head -n 1) || return 1
+  [ -n "$mouse_id" ] || return 1
+
+  omarchy_slot_for_monitor_id "$mouse_id"
+}
+
+omarchy_monitor_id_for_slot() {
+  local target_slot="$1"
+  [[ "$target_slot" =~ ^[0-9]+$ ]] || return 1
+
   local slot=0 monitor_id
   while IFS= read -r monitor_id; do
     [ -n "$monitor_id" ] || continue
-    if [ "$monitor_id" = "$focused_id" ]; then
-      printf '%s\n' "$slot"
+    if [ "$slot" = "$target_slot" ]; then
+      printf '%s\n' "$monitor_id"
       return 0
     fi
     slot=$((slot + 1))
@@ -793,8 +872,39 @@ omarchy_focused_workspace() {
 omarchy_workspace_for_key() {
   local key="$1"
   local slot
-  slot=$(omarchy_focused_monitor_slot) || return 1
+  slot=$(omarchy_mouse_monitor_slot 2>/dev/null || omarchy_focused_monitor_slot) || return 1
   printf '%s%s\n' "$slot" "$key"
+}
+
+omarchy_switch_workspace_on_slot_monitor() {
+  local workspace="$1"
+  [[ "$workspace" =~ ^[0-9][0-9]$ ]] || return 1
+
+  local slot monitor_id other_monitor visible_workspace
+  local restore_workspaces=()
+  slot="${workspace:0:1}"
+  monitor_id=$(omarchy_monitor_id_for_slot "$slot") || return 1
+
+  if [ "$slot" != "0" ]; then
+    while IFS= read -r other_monitor; do
+      [ -n "$other_monitor" ] || continue
+      [ "$other_monitor" != "$monitor_id" ] || continue
+      visible_workspace=$("$OMARCHY_AEROSPACE_BIN" list-workspaces --monitor "$other_monitor" --visible --format '%{workspace}' 2>/dev/null | head -n 1)
+      [ -n "$visible_workspace" ] || continue
+      [ "$visible_workspace" != "$workspace" ] || continue
+      restore_workspaces+=("$visible_workspace")
+    done < <(omarchy_monitor_ids_by_slot)
+  fi
+
+  "$OMARCHY_AEROSPACE_BIN" workspace "$workspace"
+
+  for visible_workspace in "${restore_workspaces[@]}"; do
+    "$OMARCHY_AEROSPACE_BIN" workspace "$visible_workspace" >/dev/null 2>&1 || true
+  done
+
+  "$OMARCHY_AEROSPACE_BIN" focus-monitor "$monitor_id" >/dev/null 2>&1 || true
+  "$OMARCHY_AEROSPACE_BIN" move-mouse monitor-lazy-center >/dev/null 2>&1 || true
+  sleep 0.05
 }
 
 omarchy_attached_monitor_count() {
@@ -816,7 +926,7 @@ omarchy_repair_detached_monitor_workspaces() {
   local count
   count=$(omarchy_attached_monitor_count) || return 1
 
-  local monitor_id legacy_slot visible_workspace legacy_target legacy_windows legacy_window_id
+  local monitor_id legacy_slot visible_workspace legacy_target legacy_windows legacy_window_id visible_slot visible_monitor_id
   legacy_slot=0
   while IFS= read -r monitor_id; do
     [ -n "$monitor_id" ] || continue
@@ -829,6 +939,14 @@ omarchy_repair_detached_monitor_workspaces() {
         "$OMARCHY_AEROSPACE_BIN" move-node-to-workspace --window-id "$legacy_window_id" "$legacy_target" >/dev/null 2>&1 || true
       done <<< "$legacy_windows"
       "$OMARCHY_AEROSPACE_BIN" move-workspace-to-monitor --workspace "$legacy_target" "$monitor_id" >/dev/null 2>&1 || true
+    elif [[ "$visible_workspace" =~ ^[0-9][0-9]$ ]]; then
+      visible_slot="${visible_workspace:0:1}"
+      if [ "$visible_slot" != "$legacy_slot" ]; then
+        visible_monitor_id=$(omarchy_monitor_id_for_slot "$visible_slot" 2>/dev/null || true)
+        if [ -n "$visible_monitor_id" ]; then
+          "$OMARCHY_AEROSPACE_BIN" move-workspace-to-monitor --workspace "$visible_workspace" "$visible_monitor_id" >/dev/null 2>&1 || true
+        fi
+      fi
     fi
     legacy_slot=$((legacy_slot + 1))
   done < <(omarchy_monitor_ids_by_slot)
@@ -1392,6 +1510,11 @@ TARGET=$(omarchy_workspace_for_key "$KEY") || {
   echo "goto_space.sh: AeroSpace is not reachable; refusing to switch spaces" >&2
   exit 1
 }
+TARGET_SLOT="${TARGET:0:1}"
+omarchy_monitor_id_for_slot "$TARGET_SLOT" >/dev/null || {
+  echo "goto_space.sh: no attached monitor for workspace slot $TARGET_SLOT" >&2
+  exit 1
+}
 
 omarchy_repair_detached_monitor_workspaces || true
 
@@ -1400,7 +1523,7 @@ case "$ACTION" in
     aerospace move-node-to-workspace "$TARGET"
     ;;
   focus|*)
-    aerospace workspace "$TARGET"
+    omarchy_switch_workspace_on_slot_monitor "$TARGET"
     "$HOME/.config/sketchybar/plugins/hide_bar.sh" >/dev/null 2>&1 || true
     ;;
 esac

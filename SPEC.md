@@ -26,10 +26,19 @@ Bring the [Omarchy](https://omarchy.org/) / Hyprland Linux tiling workflow to ma
 
 Workspaces are monitor-scoped. Workspace names are two digits: `<monitor-slot><key>`.
 The built-in display is slot `0` when present; external displays follow in AeroSpace's
-monitor order. The number-row shortcuts always resolve against the currently focused
-monitor, so `⌥+3` on the built-in display goes to `03`, while `⌥+3` on the first
-external display goes to `13`. The `0` key is the tenth workspace, so it maps to
-`00`, `10`, etc.
+monitor order. The number-row shortcuts resolve against the monitor under the
+mouse, falling back to AeroSpace's focused monitor only when the mouse monitor
+cannot be read. So `⌥+3` with the pointer on the built-in display goes to `03`,
+while `⌥+3` with the pointer on the first external display goes to `13`. The `0`
+key is the tenth workspace, so it maps to `00`, `10`, etc. AeroSpace force
+assignments pin `10`-`39` to up to three external displays, so external-display
+workspaces follow the attached monitor slots instead of depending on specific
+monitor names. Slot-0 workspaces are intentionally left unforced so the built-in
+display keeps its current visible workspace while an external display changes
+spaces. After an external-slot switch, the helper restores the previously visible
+workspace on the other monitors, then returns focus to the target external
+monitor and centers the mouse on that monitor so the next number-row shortcut
+continues resolving against the same external slot.
 
 Default slot-0 app assignments:
 
@@ -47,7 +56,7 @@ Default slot-0 app assignments:
 
 - **Focus follows mouse** (lazy center on window focus change)
 - **Exact reboot restore** is snapshot-based. `./install.sh save-window-state` captures the current AeroSpace window list, including window id, workspace, app name, app bundle id, and title, to `~/.config/aerospace/omarchy_window_state.json`. A LaunchAgent refreshes that snapshot every 15 minutes and performs one best-effort save when macOS logs out or shuts down. App-assigned windows are canonicalized to their declared workspaces before save/restore so temporary drift cannot become reboot state. On login/startup, `startup_restore.sh` waits for AeroSpace, repairs detached-monitor workspaces, then retries matching restored windows by window id + app identity, app bundle id + title, app name + title, and app identity for canonical app-assigned windows before moving them back to their saved workspaces.
-- **Workspace repair** migrates windows from detached monitor-prefixed workspaces back to slot `0`, and also migrates visible legacy single-digit workspaces like `2` to the active monitor's slot-prefixed workspace like `12`.
+- **Workspace repair** migrates windows from detached monitor-prefixed workspaces back to slot `0`, migrates visible legacy single-digit workspaces like `2` to the active monitor's slot-prefixed workspace like `12`, and repins any visible two-digit workspace that is shown on the wrong monitor.
 - **SketchyBar** creates separate space items per monitor slot and scopes them to each SketchyBar display. Each bar shows only that monitor's workspace set; active workspaces are highlighted in blue, inactive workspaces with apps are mauve, and empty workspaces are dimmed.
 - **Bar visibility defaults off.** SketchyBar starts hidden and toggles with `⌥ + Z`; `⌥+1-0` workspace switches and `⌥+Tab` hide it again. Press-to-peek is disabled because the modifier polling/repaint path can make SketchyBar unresponsive on multi-monitor setups.
 - **Front app label** in bar shows `<workspace> <app name>`
