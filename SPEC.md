@@ -41,7 +41,7 @@ Workspaces 1–10 with automatic app assignment:
 - **Focus follows mouse** (lazy center on window focus change)
 - **Exact reboot restore** is snapshot-based. `./install.sh save-window-state` captures the current AeroSpace window list, including window id, workspace, app name, app bundle id, and title, to `~/.config/aerospace/omarchy_window_state.json`. A LaunchAgent refreshes that snapshot every 15 minutes and performs one best-effort save when macOS logs out or shuts down. App-assigned windows are canonicalized to their declared workspaces before save/restore so temporary drift cannot become reboot state. On login/startup, `startup_restore.sh` waits for AeroSpace, repairs detached-monitor workspaces, then retries matching restored windows by window id + app identity, app bundle id + title, app name + title, and app identity for canonical app-assigned windows before moving them back to their saved workspaces.
 - **SketchyBar** shows only the workspace set for the monitor each bar is on; active workspaces are highlighted in blue, inactive workspaces with apps are mauve, and empty workspaces are dimmed
-- **Bar visibility is always on.** SketchyBar stays visible; press-to-peek is disabled because the modifier polling/repaint path can make SketchyBar unresponsive on multi-monitor setups.
+- **Bar visibility defaults off.** SketchyBar starts hidden and toggles with `⌥ + Z`; press-to-peek is disabled because the modifier polling/repaint path can make SketchyBar unresponsive on multi-monitor setups.
 - **Front app label** in bar shows `<workspace> <app name>`
 - **Right-side bar** has wifi SSID, battery level with color-coded icons, and clock
 - **JankyBorders** draws a 3px mauve border on the focused window, surface0 on all others
@@ -53,7 +53,7 @@ Workspaces 1–10 with automatic app assignment:
 - Writes all config files inline from the script (no external dotfiles repo required)
 - Disables macOS window animations (`NSAutomaticWindowAnimationsEnabled`, `NSWindowResizeTime`)
 - Starts all four services via `brew services`
-- Keeps SketchyBar visible and unloads the old `bar_toggle` LaunchAgent if present
+- Keeps SketchyBar hidden by default, binds `⌥ + Z` to an explicit toggle, and unloads the old `bar_toggle` LaunchAgent if present
 - Writes a dependency-light Perl window-state helper using macOS's system Perl and `JSON::PP`; no extra package is required for saved reboot restore
 - Loads a window-state saver LaunchAgent that saves every 15 minutes and traps launchd termination for best-effort logout/shutdown saves
 - Leaves an install marker at `~/.omarchy-macos-backup/.installed` to prevent duplicate installs

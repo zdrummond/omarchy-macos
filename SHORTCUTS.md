@@ -77,6 +77,12 @@ All shortcuts use **Option (⌥)** as the modifier key, mirroring the SUPER key 
 | ⌥ + Shift + R | Reload Aerospace config |
 | ⌥ + Shift + C | Reload skhd config |
 
+## Bar
+
+| Shortcut | Action |
+|----------|--------|
+| ⌥ + Z | Toggle SketchyBar |
+
 ## Launcher
 
 Set **⌥ + Space** as the Raycast hotkey in Raycast Settings → General → Raycast Hotkey.

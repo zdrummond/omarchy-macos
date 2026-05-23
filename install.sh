@@ -1505,6 +1505,9 @@ alt + shift - s : screencapture -ic
 # Full screenshot → clipboard
 alt - p : screencapture -c
 
+# ── SketchyBar visibility toggle ──────────────────────────────────────────
+alt - z : ~/.config/sketchybar/plugins/toggle_bar.sh
+
 # ── Reload skhd config ────────────────────────────────────────────────────
 alt + shift - c : skhd --reload
 SKHD_EOF
@@ -1574,6 +1577,8 @@ source "$CONFIG_DIR/items/monitor.sh"
 
 # ── Finalise ──────────────────────────────────────────────────────────────
 sketchybar --update
+rm -f "${XDG_RUNTIME_DIR:-/tmp}/omarchy_sketchybar_visible"
+sketchybar --bar hidden=on
 SKETCHY_EOF
 
   chmod +x "$SKETCHY_DIR/sketchybarrc"
@@ -1908,6 +1913,22 @@ highlight_space() {
   sketchybar "${args[@]}"
 }
 SPACES_PLUGIN_EOF
+
+  cat > "$SKETCHY_DIR/plugins/toggle_bar.sh" << 'TOGGLE_BAR_PLUGIN_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATE_FILE="${XDG_RUNTIME_DIR:-/tmp}/omarchy_sketchybar_visible"
+
+if [[ -f "$STATE_FILE" ]] && [[ "$(cat "$STATE_FILE" 2>/dev/null)" = "1" ]]; then
+  sketchybar --bar hidden=on
+  printf '0' > "$STATE_FILE"
+else
+  sketchybar --bar hidden=off topmost=window
+  sketchybar --trigger front_app_switched >/dev/null 2>&1 || true
+  printf '1' > "$STATE_FILE"
+fi
+TOGGLE_BAR_PLUGIN_EOF
 
   cat > "$SKETCHY_DIR/plugins/front_app.sh" << 'FRONTAPP_PLUGIN_EOF'
 #!/usr/bin/env bash
