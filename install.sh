@@ -567,8 +567,9 @@ outer.right      = 8
 [mode.main.binding]
 
 # ── Workspace switching: ⌥ + 0-9 ─────────────────────────────────────────
-# Per-monitor spaces: key N on display D resolves to workspace "DN"
-# (e.g. monitor 2 + ⌥+3 = workspace "23"). See goto_space.sh.
+# Per-monitor spaces: key N resolves to workspace "<monitor-slot>N".
+# The built-in display is slot 0 when present; external displays follow it.
+# See goto_space.sh.
 alt-1 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 1'
 alt-2 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 2'
 alt-3 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 3'
@@ -715,7 +716,8 @@ write_space_state_helper() {
 # Shared helpers for monitor-scoped workspace names.
 #
 # Workspace names are "${slot}${key}" where slot is the focused monitor's
-# current attachment-order index. This deliberately does not use
+# stable Omarchy slot. The built-in display is slot 0 when present, followed by
+# external displays in AeroSpace's order. This deliberately does not use
 # "monitor-id - 1": after unplug/replug macOS and AeroSpace may keep assigning
 # non-1 monitor ids even when only one physical display remains.
 
@@ -723,6 +725,27 @@ OMARCHY_AEROSPACE_BIN="${OMARCHY_AEROSPACE_BIN:-aerospace}"
 
 omarchy_aerospace_available() {
   "$OMARCHY_AEROSPACE_BIN" list-monitors --format '%{monitor-id}' >/dev/null 2>&1
+}
+
+omarchy_monitor_ids_by_slot() {
+  local rows line monitor_id monitor_name
+  rows=$("$OMARCHY_AEROSPACE_BIN" list-monitors --format '%{monitor-id}|%{monitor-name}' 2>/dev/null) || return 1
+
+  local built_in_ids=()
+  local external_ids=()
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    monitor_id="${line%%|*}"
+    monitor_name="${line#*|}"
+    [ -n "$monitor_id" ] || continue
+    if [[ "$monitor_name" =~ [Bb]uilt.?in ]]; then
+      built_in_ids+=("$monitor_id")
+    else
+      external_ids+=("$monitor_id")
+    fi
+  done <<< "$rows"
+
+  printf '%s\n' "${built_in_ids[@]}" "${external_ids[@]}" | awk 'NF'
 }
 
 omarchy_focused_monitor_slot() {
@@ -738,7 +761,7 @@ omarchy_focused_monitor_slot() {
       return 0
     fi
     slot=$((slot + 1))
-  done < <("$OMARCHY_AEROSPACE_BIN" list-monitors --format '%{monitor-id}' 2>/dev/null)
+  done < <(omarchy_monitor_ids_by_slot)
 
   return 1
 }
@@ -1314,7 +1337,7 @@ write_goto_space_helper() {
 #   goto_space.sh <key> --move   # move focused window to that workspace
 #
 # <key> is 0-9. Workspace names are `${display_slot}${key}` where display_slot
-# is the focused monitor's current attachment-order index.
+# is the focused monitor's stable Omarchy slot.
 
 set -euo pipefail
 
@@ -1588,11 +1611,12 @@ SPACE_ALIASES_EOF
 source "$CONFIG_DIR/colors.sh"
 source "$HOME/.config/aerospace/omarchy_space_state.sh"
 
-monitor_count=$(omarchy_attached_monitor_count 2>/dev/null || printf '1')
-[ "$monitor_count" -gt 10 ] && monitor_count=10
-
-for slot in $(seq 0 $((monitor_count - 1))); do
-  display=$((slot + 1))
+monitors=$(omarchy_monitor_ids_by_slot 2>/dev/null || printf '1')
+slot=0
+while IFS= read -r monitor_id; do
+  [ -n "$monitor_id" ] || continue
+  [ "$slot" -gt 9 ] && break
+  display="$monitor_id"
   for sid in 1 2 3 4 5 6 7 8 9 0; do
     name="space.$slot.$sid"
     sketchybar --add item "$name" left \
@@ -1626,7 +1650,8 @@ for slot in $(seq 0 $((monitor_count - 1))); do
       padding_left=2 \
       padding_right=2 \
       label.drawing=off
-done
+  slot=$((slot + 1))
+done <<< "$monitors"
 SPACES_ITEM_EOF
 
   # ── Front app ─────────────────────────────────────────────────────────────
@@ -1649,11 +1674,12 @@ FRONTAPP_ITEM_EOF
 source "$CONFIG_DIR/colors.sh"
 source "$HOME/.config/aerospace/omarchy_space_state.sh"
 
-monitor_count=$(omarchy_attached_monitor_count 2>/dev/null || printf '1')
-[ "$monitor_count" -gt 10 ] && monitor_count=10
-
-for slot in $(seq 0 $((monitor_count - 1))); do
-  display=$((slot + 1))
+monitors=$(omarchy_monitor_ids_by_slot 2>/dev/null || printf '1')
+slot=0
+while IFS= read -r monitor_id; do
+  [ -n "$monitor_id" ] || continue
+  [ "$slot" -gt 9 ] && break
+  display="$monitor_id"
   sketchybar --add item "monitor.$slot" right \
     --set "monitor.$slot" \
       display="$display" \
@@ -1667,7 +1693,8 @@ for slot in $(seq 0 $((monitor_count - 1))); do
       background.height=24 \
       padding_left=6 \
       padding_right=6
-done
+  slot=$((slot + 1))
+done <<< "$monitors"
 MONITOR_ITEM_EOF
 
   # ── Right-side items: wifi, battery, clock ─────────────────────────────
@@ -1714,8 +1741,8 @@ CLOCK_ITEM_EOF
 #!/usr/bin/env bash
 # Usage: source "$CONFIG_DIR/plugins/spaces.sh" && highlight_space <focused_workspace>
 #
-# Per-monitor spaces: workspace names are "${display_slot}${key}" (e.g. "23"
-# for monitor 2, key 3). Each physical bar gets its own item namespace:
+# Per-monitor spaces: workspace names are "${display_slot}${key}" (e.g. "13"
+# for slot 1, key 3). Each physical bar gets its own item namespace:
 # space.<display_slot>.<key>, scoped with SketchyBar's display property.
 
 source "$CONFIG_DIR/colors.sh"
@@ -1759,7 +1786,7 @@ highlight_space() {
   }
 
   local monitors
-  monitors=$("$OMARCHY_AEROSPACE_BIN" list-monitors --format '%{monitor-id}' 2>/dev/null) || {
+  monitors=$(omarchy_monitor_ids_by_slot) || {
     sketchybar --set monitor.0 label="AS?" >/dev/null 2>&1 || true
     return 0
   }
