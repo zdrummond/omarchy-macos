@@ -1616,7 +1616,7 @@ slot=0
 while IFS= read -r monitor_id; do
   [ -n "$monitor_id" ] || continue
   [ "$slot" -gt 9 ] && break
-  display="$monitor_id"
+  display=$((slot + 1))
   for sid in 1 2 3 4 5 6 7 8 9 0; do
     name="space.$slot.$sid"
     sketchybar --add item "$name" left \
@@ -1679,7 +1679,7 @@ slot=0
 while IFS= read -r monitor_id; do
   [ -n "$monitor_id" ] || continue
   [ "$slot" -gt 9 ] && break
-  display="$monitor_id"
+  display=$((slot + 1))
   sketchybar --add item "monitor.$slot" right \
     --set "monitor.$slot" \
       display="$display" \
