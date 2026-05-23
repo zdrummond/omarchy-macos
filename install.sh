@@ -689,7 +689,7 @@ run = ['move-node-to-workspace 06', 'workspace 06']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Steam'
-run = ['move-node-to-workspace 09', 'workspace 09']
+run = ['move-node-to-workspace 00', 'workspace 00']
 
 # [[on-window-detected]]
 # if.app-name-regex-substring = 'slack|discord'
@@ -1036,7 +1036,7 @@ sub assigned_workspace {
     return "06" if $bundle eq "com.google.GeminiMacOS";
     return "06" if $bundle eq "com.openai.chat";
     return "06" if $app =~ /ChatGPT/i;
-    return "09" if $app =~ /Steam/i;
+    return "00" if $app =~ /Steam/i;
 
     return undef;
 }

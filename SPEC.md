@@ -34,7 +34,7 @@ Workspaces 1–10 with automatic app assignment:
 | 4 (Terms) | Ghostty, WezTerm, Warp, iTerm |
 | 5 (Editors) | Zed, VS Code, Antigravity |
 | 6 (Agents) | Claude desktop, Gemini, ChatGPT |
-| 9 | Steam |
+| 0 | Steam |
 
 ## Key Behaviors
 
