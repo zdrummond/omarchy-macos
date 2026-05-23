@@ -17,6 +17,22 @@ Check status:
 ./install.sh status
 ```
 
+The exact AeroSpace window/workspace layout is saved automatically every 15
+minutes and once more on a best-effort basis when macOS logs out or shuts down.
+You can also save it manually after arranging windows the way you want them to
+come back after reboot:
+
+```sh
+./install.sh save-window-state
+```
+
+The saved state is restored automatically at login/startup. You can also replay
+it manually:
+
+```sh
+./install.sh restore-window-state
+```
+
 Revert the install:
 
 ```sh

@@ -5,6 +5,8 @@
 # Usage:
 #   ./install.sh install   — install and configure everything
 #   ./install.sh refresh   — rewrite generated configs without reinstalling brew packages
+#   ./install.sh save-window-state — save current window/workspace layout
+#   ./install.sh restore-window-state — replay saved window/workspace layout
 #   ./install.sh revert    — undo everything, restore previous state
 #   ./install.sh status    — show what's installed and running
 #
@@ -41,10 +43,23 @@ BAR_TOGGLE_SRC="$SKETCHY_DIR/plugins/bar_toggle.swift"
 BAR_TOGGLE_LABEL="com.omarchy-macos.bar_toggle"
 BAR_TOGGLE_PLIST="$HOME/Library/LaunchAgents/$BAR_TOGGLE_LABEL.plist"
 
-CHROME_REHOME_BIN="$SKETCHY_DIR/plugins/chrome_rehome"
+AEROSPACE_START_LABEL="com.omarchy-macos.aerospace_start"
+AEROSPACE_START_PLIST="$HOME/Library/LaunchAgents/$AEROSPACE_START_LABEL.plist"
+
 CHROME_REHOME_SRC="$SKETCHY_DIR/plugins/chrome_rehome.swift"
 CHROME_REHOME_LABEL="com.omarchy-macos.chrome_rehome"
+CHROME_REHOME_APP="$HOME/Applications/Omarchy Chrome Rehome.app"
+CHROME_REHOME_BIN="$CHROME_REHOME_APP/Contents/MacOS/chrome_rehome"
 CHROME_REHOME_PLIST="$HOME/Library/LaunchAgents/$CHROME_REHOME_LABEL.plist"
+
+WINDOW_STATE_FILE="$AEROSPACE_DIR/omarchy_window_state.json"
+WINDOW_STATE_HELPER="$AEROSPACE_DIR/window_state.pl"
+WINDOW_STATE_WRAPPER="$AEROSPACE_DIR/window_state.sh"
+WINDOW_STATE_LOG="/tmp/omarchy_window_state.log"
+WINDOW_STATE_SAVER="$AEROSPACE_DIR/window_state_saver.sh"
+WINDOW_STATE_SAVE_INTERVAL_SECONDS=900
+WINDOW_STATE_SAVER_LABEL="com.omarchy-macos.window_state_saver"
+WINDOW_STATE_SAVER_PLIST="$HOME/Library/LaunchAgents/$WINDOW_STATE_SAVER_LABEL.plist"
 
 INSTALLED_MARKER="$BACKUP_DIR/.installed"
 
@@ -72,7 +87,10 @@ cmd_install() {
   header "Writing configuration files..."
   write_aerospace_config
   write_space_state_helper
+  write_window_state_helper
+  write_window_state_saver_agent
   write_goto_space_helper
+  write_aerospace_start_agent
   write_skhd_config
   write_sketchybar_config
   write_borders_config
@@ -124,7 +142,10 @@ cmd_refresh() {
   header "Rewriting generated configuration files..."
   write_aerospace_config
   write_space_state_helper
+  write_window_state_helper
+  write_window_state_saver_agent
   write_goto_space_helper
+  write_aerospace_start_agent
   write_skhd_config
   write_sketchybar_config
   write_borders_config
@@ -165,6 +186,21 @@ cmd_repair_spaces() {
 }
 
 # =============================================================================
+# WINDOW STATE SAVE / RESTORE
+# =============================================================================
+cmd_save_window_state() {
+  header "omarchy-macos save window state"
+  write_window_state_helper
+  "$WINDOW_STATE_WRAPPER" save
+}
+
+cmd_restore_window_state() {
+  header "omarchy-macos restore window state"
+  write_window_state_helper
+  "$WINDOW_STATE_WRAPPER" restore
+}
+
+# =============================================================================
 # REVERT
 # =============================================================================
 cmd_revert() {
@@ -185,8 +221,11 @@ cmd_revert() {
   rm -rf "$SKHD_DIR"
   rm -rf "$SKETCHY_DIR"
   rm -rf "$BORDERS_DIR"
+  rm -f "$AEROSPACE_START_PLIST"
+  rm -f "$WINDOW_STATE_SAVER_PLIST"
   rm -f "$BAR_TOGGLE_PLIST"
   rm -f "$CHROME_REHOME_PLIST"
+  rm -rf "$CHROME_REHOME_APP"
   success "Config files removed"
 
   header "Restoring backups..."
@@ -218,10 +257,25 @@ cmd_status() {
   check_tool "jankyborders" "$(brew list FelixKratz/formulae/borders &>/dev/null && echo yes || echo no)"
 
   echo ""
-  check_service "aerospace"
-  check_service "skhd"
+  check_aerospace_app
+  check_launch_agent "com.koekeishiya.skhd"
   check_service "sketchybar"
   check_service "borders"
+  check_launch_agent "$AEROSPACE_START_LABEL"
+  check_launch_agent "$WINDOW_STATE_SAVER_LABEL"
+  check_launch_agent "$BAR_TOGGLE_LABEL"
+  check_launch_agent "$CHROME_REHOME_LABEL"
+
+  echo ""
+  if aerospace list-monitors --format '%{monitor-id}' >/dev/null 2>&1; then
+    success "AeroSpace server reachable"
+  else
+    warn "AeroSpace server is not reachable — window restore and workspace moves will fail"
+  fi
+  if [[ -f /tmp/chrome_rehome.log ]] && awk '/AXIsProcessTrusted/ { last=$0 } END { exit(last ~ /false/ ? 0 : 1) }' /tmp/chrome_rehome.log 2>/dev/null; then
+    warn "chrome_rehome is not Accessibility-trusted — grant it in Privacy & Security → Accessibility"
+  fi
+  check_window_state
 
   echo ""
   if [[ -f "$INSTALLED_MARKER" ]]; then
@@ -344,9 +398,19 @@ brew_uninstall() {
 # SERVICES
 # =============================================================================
 start_services() {
+  info "Loading AeroSpace login starter..."
+  launchctl unload "$AEROSPACE_START_PLIST" 2>/dev/null || true
+  launchctl load "$AEROSPACE_START_PLIST" 2>/dev/null || \
+    warn "Could not load AeroSpace login LaunchAgent"
+
+  info "Starting window state saver..."
+  launchctl unload "$WINDOW_STATE_SAVER_PLIST" 2>/dev/null || true
+  launchctl load "$WINDOW_STATE_SAVER_PLIST" 2>/dev/null || \
+    warn "Could not load window state saver LaunchAgent"
+
   info "Starting aerospace..."
   if [[ -d /Applications/AeroSpace.app ]]; then
-    open -gj -a /Applications/AeroSpace.app 2>/dev/null || \
+    open -g -a /Applications/AeroSpace.app 2>/dev/null || \
       warn "Could not auto-start aerospace — launch /Applications/AeroSpace.app manually"
   else
     warn "Could not find /Applications/AeroSpace.app — reinstall aerospace"
@@ -380,6 +444,12 @@ start_services() {
 }
 
 stop_services() {
+  if [[ -f "$AEROSPACE_START_PLIST" ]]; then
+    launchctl unload "$AEROSPACE_START_PLIST" 2>/dev/null && info "  stopped AeroSpace login starter" || true
+  fi
+  if [[ -f "$WINDOW_STATE_SAVER_PLIST" ]]; then
+    launchctl unload "$WINDOW_STATE_SAVER_PLIST" 2>/dev/null && info "  stopped window state saver" || true
+  fi
   if [[ -f "$BAR_TOGGLE_PLIST" ]]; then
     launchctl unload "$BAR_TOGGLE_PLIST" 2>/dev/null && info "  stopped bar_toggle" || true
   fi
@@ -408,6 +478,42 @@ check_service() {
   fi
 }
 
+check_launch_agent() {
+  local label="$1"
+  if launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
+    echo -e "  ${GREEN}●${RESET} $label — loaded"
+  else
+    echo -e "  ${YELLOW}●${RESET} $label — not loaded"
+  fi
+}
+
+check_aerospace_app() {
+  if aerospace list-monitors --format '%{monitor-id}' >/dev/null 2>&1; then
+    echo -e "  ${GREEN}●${RESET} AeroSpace — server reachable"
+  elif launchctl print "gui/$(id -u)" 2>/dev/null | grep -q "application.bobko.aerospace"; then
+    echo -e "  ${YELLOW}●${RESET} AeroSpace — app running, server unreachable"
+  else
+    echo -e "  ${RED}○${RESET} AeroSpace — not running"
+  fi
+}
+
+check_window_state() {
+  if [[ ! -f "$WINDOW_STATE_FILE" ]]; then
+    warn "No saved window state found — run './install.sh save-window-state' or wait for the periodic saver"
+    return 0
+  fi
+
+  local summary
+  summary=$(/usr/bin/perl -MJSON::PP -0777 -e '
+    my $data = eval { decode_json(<>); } || {};
+    my $count = ref($data->{windows}) eq "ARRAY" ? scalar(@{$data->{windows}}) : 0;
+    my $saved = $data->{saved_at} || "unknown time";
+    print "$count windows saved at $saved";
+  ' "$WINDOW_STATE_FILE" 2>/dev/null) || summary="unreadable saved state"
+  success "Window state: $summary"
+  echo "    $WINDOW_STATE_FILE"
+}
+
 check_tool() {
   local name="$1" installed="$2"
   if [[ "$installed" == "yes" ]]; then
@@ -431,8 +537,7 @@ write_aerospace_config() {
 # =============================================================================
 
 # ── Behavior ──────────────────────────────────────────────────────────────────
-after-login-command = []
-after-startup-command = []
+after-startup-command = ['exec-and-forget ~/.config/aerospace/startup_restore.sh']
 
 # Automatically move focus to wherever your mouse is
 on-focus-changed = [
@@ -578,6 +683,14 @@ if.app-id = 'com.google.GeminiMacOS'
 run = ['move-node-to-workspace 06', 'workspace 06']
 
 [[on-window-detected]]
+if.app-id = 'com.openai.chat'
+run = ['move-node-to-workspace 06', 'workspace 06']
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'ChatGPT'
+run = ['move-node-to-workspace 06', 'workspace 06']
+
+[[on-window-detected]]
 if.app-name-regex-substring = 'Steam'
 run = ['move-node-to-workspace 09', 'workspace 09']
 
@@ -687,14 +800,500 @@ set -euo pipefail
 
 source "$HOME/.config/aerospace/omarchy_space_state.sh"
 
-omarchy_repair_detached_monitor_workspaces || {
+for _ in {1..30}; do
+  if omarchy_aerospace_available; then
+    break
+  fi
+  sleep 1
+done
+
+if ! omarchy_aerospace_available; then
   echo "repair_spaces.sh: AeroSpace is not reachable; no spaces were changed" >&2
   exit 1
-}
+fi
+
+for _ in {1..6}; do
+  omarchy_repair_detached_monitor_workspaces || true
+  sleep 2
+done
 REPAIR_SPACES_EOF
 
   chmod +x "$AEROSPACE_DIR/repair_spaces.sh"
+  cat > "$AEROSPACE_DIR/startup_restore.sh" << 'STARTUP_RESTORE_EOF'
+#!/usr/bin/env bash
+# Login/startup repair pass. Detached-monitor repair runs first so rule-based
+# placement is sane, then the saved exact layout is replayed when present.
+
+set -euo pipefail
+
+"$HOME/.config/aerospace/repair_spaces.sh" || true
+"$HOME/.config/aerospace/window_state.sh" restore || true
+"$HOME/.config/aerospace/repair_spaces.sh" || true
+STARTUP_RESTORE_EOF
+
+  chmod +x "$AEROSPACE_DIR/startup_restore.sh"
   success "space state helper written to $AEROSPACE_DIR/omarchy_space_state.sh"
+}
+
+# =============================================================================
+# WINDOW STATE HELPER
+# Saves and restores exact app/window/workspace placement for reboot recovery.
+# =============================================================================
+write_window_state_helper() {
+  info "Writing window state helper..."
+  mkdir -p "$AEROSPACE_DIR"
+
+  cat > "$WINDOW_STATE_HELPER" << 'WINDOW_STATE_PERL_EOF'
+#!/usr/bin/env perl
+use strict;
+use warnings;
+
+use Encode qw(decode_utf8);
+use File::Path qw(make_path);
+use JSON::PP qw(decode_json);
+use POSIX qw(strftime);
+
+my $home = $ENV{HOME} || "";
+my $state_file = $ENV{OMARCHY_WINDOW_STATE_FILE} || "$home/.config/aerospace/omarchy_window_state.json";
+my $log_file = $ENV{OMARCHY_WINDOW_STATE_LOG} || "/tmp/omarchy_window_state.log";
+my $restore_attempts = $ENV{OMARCHY_WINDOW_RESTORE_ATTEMPTS} || 120;
+my $restore_delay = $ENV{OMARCHY_WINDOW_RESTORE_DELAY} || 2;
+my $save_wait_attempts = $ENV{OMARCHY_WINDOW_SAVE_WAIT_ATTEMPTS} || 60;
+my $skip_empty_save = $ENV{OMARCHY_WINDOW_SKIP_EMPTY_SAVE} || 0;
+my $sep = "\x1f";
+my $format = join($sep,
+    "%{window-id}",
+    "%{workspace}",
+    "%{app-name}",
+    "%{app-bundle-id}",
+    "%{window-title}",
+);
+
+binmode STDOUT, ":encoding(UTF-8)";
+binmode STDERR, ":encoding(UTF-8)";
+
+sub aerospace_bin {
+    return $ENV{OMARCHY_AEROSPACE_BIN} if $ENV{OMARCHY_AEROSPACE_BIN};
+    for my $candidate ("/opt/homebrew/bin/aerospace", "/usr/local/bin/aerospace") {
+        return $candidate if -x $candidate;
+    }
+    return "aerospace";
+}
+
+my $aerospace = aerospace_bin();
+
+sub timestamp {
+    return strftime("%Y-%m-%dT%H:%M:%S%z", localtime);
+}
+
+sub log_msg {
+    my ($msg) = @_;
+    if (open my $fh, ">>", $log_file) {
+        binmode $fh, ":encoding(UTF-8)";
+        print {$fh} "[" . timestamp() . "] $msg\n";
+        close $fh;
+    }
+}
+
+sub say_and_log {
+    my ($msg) = @_;
+    print "$msg\n";
+    log_msg($msg);
+}
+
+sub aerospace_output {
+    my (@args) = @_;
+    open my $old_stderr, ">&", \*STDERR;
+    open STDERR, ">", "/dev/null";
+    my $opened = open my $fh, "-|", $aerospace, @args;
+    open STDERR, ">&", $old_stderr;
+    close $old_stderr;
+    return ("", 0) unless $opened;
+    local $/;
+    my $out = <$fh>;
+    close $fh;
+    return ($out // "", $? == 0);
+}
+
+sub aerospace_ok {
+    my (@args) = @_;
+    system($aerospace, @args);
+    return $? == 0;
+}
+
+sub wait_for_aerospace {
+    my ($attempts) = @_;
+    $attempts ||= 60;
+    for my $attempt (1..$attempts) {
+        my ($out, $ok) = aerospace_output("list-monitors", "--format", "%{monitor-id}");
+        return 1 if $ok && $out =~ /\S/;
+        sleep 1;
+    }
+    return 0;
+}
+
+sub monitor_count {
+    my ($out, $ok) = aerospace_output("list-monitors", "--format", "%{monitor-id}");
+    return 1 unless $ok;
+    my @monitors = grep { /\S/ } split /\n/, $out;
+    return scalar(@monitors) || 1;
+}
+
+sub current_windows {
+    my ($required) = @_;
+    my ($out, $ok) = aerospace_output("list-windows", "--all", "--format", $format);
+    die "AeroSpace list-windows failed\n" if !$ok && $required;
+    return () unless $ok;
+
+    my @windows;
+    for my $line (split /\n/, $out) {
+        next unless length $line;
+        my @parts = split /\Q$sep\E/, $line, 5;
+        next unless @parts >= 5 && $parts[0] =~ /^\d+$/;
+        @parts = map { decode_utf8($_ // "", 1) } @parts;
+        push @windows, {
+            window_id => 0 + $parts[0],
+            workspace => $parts[1] // "",
+            app_name => $parts[2] // "",
+            app_bundle_id => $parts[3] // "",
+            title => $parts[4] // "",
+        };
+    }
+    return @windows;
+}
+
+sub assigned_workspace {
+    my ($window) = @_;
+    my $app = $window->{app_name} || "";
+    my $bundle = $window->{app_bundle_id} || "";
+
+    return "01" if $app =~ /Gmail/i;
+    return "02" if $app =~ /Messages|Signal/i;
+    return "03" if $app =~ /Spotify|Music/i;
+    return "04" if $app =~ /Ghostty|WezTerm|Warp|iTerm2/i;
+    return "05" if $app =~ /Zed|Antigravity/i;
+    return "06" if $bundle eq "com.anthropic.claudefordesktop";
+    return "06" if $bundle eq "com.google.GeminiMacOS";
+    return "06" if $bundle eq "com.openai.chat";
+    return "06" if $app =~ /ChatGPT/i;
+    return "09" if $app =~ /Steam/i;
+
+    return undef;
+}
+
+sub canonicalize_window_workspaces {
+    my (@windows) = @_;
+    for my $window (@windows) {
+        my $assigned = assigned_workspace($window);
+        next unless defined $assigned;
+        if (($window->{workspace} || "") ne $assigned) {
+            log_msg("canonicalized saved workspace for $window->{app_name} / $window->{app_bundle_id} from $window->{workspace} to $assigned");
+            $window->{workspace} = $assigned;
+        }
+    }
+    return @windows;
+}
+
+sub state_dir {
+    my $dir = $state_file;
+    $dir =~ s{/[^/]+$}{};
+    return $dir;
+}
+
+sub read_state {
+    open my $fh, "<", $state_file or return undef;
+    local $/;
+    my $json = <$fh>;
+    close $fh;
+    return eval { decode_json($json) };
+}
+
+sub save_state {
+    wait_for_aerospace($save_wait_attempts) or die "AeroSpace is not reachable; cannot save window state\n";
+    my @windows = canonicalize_window_workspaces(current_windows(1));
+    if ($skip_empty_save && !@windows && -f $state_file) {
+        say_and_log("No windows found; leaving existing window state at $state_file");
+        return 0;
+    }
+    make_path(state_dir());
+
+    my $state = {
+        format_version => 1,
+        saved_at => timestamp(),
+        windows => \@windows,
+    };
+    my $json = JSON::PP->new->ascii->pretty->canonical->encode($state);
+    open my $fh, ">", $state_file or die "Could not write $state_file: $!\n";
+    print {$fh} $json;
+    close $fh;
+
+    say_and_log("Saved " . scalar(@windows) . " windows to $state_file");
+}
+
+sub target_workspace {
+    my ($workspace, $count) = @_;
+    return "" unless defined $workspace && length $workspace;
+    if ($workspace =~ /^([0-9])([0-9])$/ && $1 >= $count) {
+        return "0$2";
+    }
+    return $workspace;
+}
+
+sub same {
+    my ($left, $right) = @_;
+    return defined($left) && defined($right) && $left eq $right;
+}
+
+sub same_identity {
+    my ($window, $saved) = @_;
+    if (length($saved->{app_bundle_id} || "")) {
+        return same($window->{app_bundle_id}, $saved->{app_bundle_id});
+    }
+    return same($window->{app_name}, $saved->{app_name});
+}
+
+sub find_match {
+    my ($saved, $current, $used) = @_;
+
+    for my $window (@{$current}) {
+        next if $used->{$window->{window_id}};
+        next unless same($window->{window_id}, $saved->{window_id});
+        next unless same_identity($window, $saved);
+        return $window;
+    }
+
+    for my $mode ("bundle-title", "name-title") {
+        for my $window (@{$current}) {
+            next if $used->{$window->{window_id}};
+            next unless same($window->{title}, $saved->{title});
+            if ($mode eq "bundle-title") {
+                next unless length($saved->{app_bundle_id} || "");
+                next unless same($window->{app_bundle_id}, $saved->{app_bundle_id});
+            } else {
+                next unless same($window->{app_name}, $saved->{app_name});
+            }
+            return $window;
+        }
+    }
+
+    if (defined assigned_workspace($saved)) {
+        for my $window (@{$current}) {
+            next if $used->{$window->{window_id}};
+            next unless same_identity($window, $saved);
+            return $window;
+        }
+    }
+
+    if (!length($saved->{title} || "")) {
+        my @matches = grep {
+            !$used->{$_->{window_id}} && same_identity($_, $saved)
+        } @{$current};
+        return $matches[0] if @matches == 1;
+    }
+
+    return undef;
+}
+
+sub restore_state {
+    unless (-f $state_file) {
+        say_and_log("No saved window state at $state_file; skipping exact restore");
+        return 0;
+    }
+    wait_for_aerospace(60) or die "AeroSpace is not reachable; cannot restore window state\n";
+
+    my $state = read_state();
+    die "Could not parse $state_file\n" unless $state && ref($state->{windows}) eq "ARRAY";
+
+    my @saved = @{$state->{windows}};
+    if (!@saved) {
+        say_and_log("Saved window state is empty; nothing to restore");
+        return 0;
+    }
+
+    my %done;
+    my %reported;
+    my $count = monitor_count();
+    my $total = scalar(@saved);
+
+    for my $attempt (1..$restore_attempts) {
+        my @current = current_windows();
+        my %used;
+        my $matched_this_round = 0;
+
+        for my $idx (0..$#saved) {
+            next if $done{$idx};
+            my $saved = $saved[$idx];
+            my $target = target_workspace(assigned_workspace($saved) || $saved->{workspace}, $count);
+            next unless length $target;
+
+            my $match = find_match($saved, \@current, \%used);
+            next unless $match;
+
+            $used{$match->{window_id}} = 1;
+            $matched_this_round++;
+
+            if ($match->{workspace} eq $target) {
+                log_msg("window $match->{window_id} already on $target: $saved->{app_name} / $saved->{title}") unless $reported{$idx}++;
+                $done{$idx} = 1;
+                next;
+            }
+
+            if (aerospace_ok("move-node-to-workspace", "--window-id", "$match->{window_id}", "$target")) {
+                log_msg("moved window $match->{window_id} from $match->{workspace} to $target: $saved->{app_name} / $saved->{title}");
+                $done{$idx} = 1;
+            } else {
+                log_msg("failed moving window $match->{window_id} to $target: $saved->{app_name} / $saved->{title}");
+            }
+        }
+
+        my $remaining = grep { !$done{$_} } 0..$#saved;
+        if ($remaining == 0) {
+            say_and_log("Restored $total saved windows from $state_file");
+            return 0;
+        }
+
+        last if $attempt == $restore_attempts;
+        sleep $restore_delay;
+    }
+
+    my $unmatched = 0;
+    for my $idx (0..$#saved) {
+        next if $done{$idx};
+        my $saved = $saved[$idx];
+        my $target = target_workspace(assigned_workspace($saved) || $saved->{workspace}, $count);
+        log_msg("unmatched saved window for $target: $saved->{app_name} / $saved->{app_bundle_id} / $saved->{title}");
+        $unmatched++;
+    }
+    say_and_log("Window restore finished with $unmatched unmatched saved windows; see $log_file");
+    return 0;
+}
+
+sub status_state {
+    unless (-f $state_file) {
+        print "No saved window state at $state_file\n";
+        return 0;
+    }
+    my $state = read_state();
+    unless ($state && ref($state->{windows}) eq "ARRAY") {
+        print "Saved window state is unreadable at $state_file\n";
+        return 1;
+    }
+    print scalar(@{$state->{windows}}) . " windows saved at " . ($state->{saved_at} || "unknown time") . "\n";
+    print "$state_file\n";
+}
+
+my $command = shift(@ARGV) || "status";
+if ($command eq "save") {
+    save_state();
+} elsif ($command eq "restore") {
+    restore_state();
+} elsif ($command eq "status") {
+    status_state();
+} else {
+    die "usage: window_state.sh save|restore|status\n";
+}
+WINDOW_STATE_PERL_EOF
+
+  chmod +x "$WINDOW_STATE_HELPER"
+  cat > "$WINDOW_STATE_WRAPPER" << 'WINDOW_STATE_WRAPPER_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec /usr/bin/perl "$HOME/.config/aerospace/window_state.pl" "$@"
+WINDOW_STATE_WRAPPER_EOF
+
+  chmod +x "$WINDOW_STATE_WRAPPER"
+  success "window state helper written to $WINDOW_STATE_WRAPPER"
+}
+
+# =============================================================================
+# WINDOW STATE SAVER AGENT
+# Saves the current AeroSpace window layout every 15 minutes. The long-running
+# helper also traps launchd termination during logout/shutdown and performs one
+# final best-effort save before exiting.
+# =============================================================================
+write_window_state_saver_agent() {
+  info "Writing window state saver..."
+  mkdir -p "$AEROSPACE_DIR" "$HOME/Library/LaunchAgents"
+
+  cat > "$WINDOW_STATE_SAVER" << WINDOW_STATE_SAVER_EOF
+#!/usr/bin/env bash
+set -u
+
+HELPER="$WINDOW_STATE_WRAPPER"
+LOG_FILE="$WINDOW_STATE_LOG"
+INTERVAL="\${OMARCHY_WINDOW_STATE_SAVE_INTERVAL:-$WINDOW_STATE_SAVE_INTERVAL_SECONDS}"
+SAVE_WAIT_ATTEMPTS="\${OMARCHY_WINDOW_SAVE_WAIT_ATTEMPTS:-5}"
+sleep_pid=""
+
+log_msg() {
+  printf '[%s] %s\n' "\$(date '+%Y-%m-%dT%H:%M:%S%z')" "\$*" >> "\$LOG_FILE"
+}
+
+save_now() {
+  local reason="\$1"
+  if [[ ! -x "\$HELPER" ]]; then
+    log_msg "window state helper missing at \$HELPER"
+    return 0
+  fi
+
+  log_msg "saving window state (\$reason)"
+  OMARCHY_WINDOW_SAVE_WAIT_ATTEMPTS="\$SAVE_WAIT_ATTEMPTS" \
+    OMARCHY_WINDOW_SKIP_EMPTY_SAVE=1 \
+    "\$HELPER" save >> "\$LOG_FILE" 2>&1 || \
+    log_msg "window state save failed (\$reason)"
+}
+
+shutdown() {
+  trap - TERM INT HUP
+  if [[ -n "\$sleep_pid" ]]; then
+    kill "\$sleep_pid" 2>/dev/null || true
+  fi
+  save_now "shutdown"
+  exit 0
+}
+
+trap shutdown TERM INT HUP
+
+log_msg "window state saver started; interval \${INTERVAL}s"
+
+while true; do
+  sleep "\$INTERVAL" &
+  sleep_pid="\$!"
+  wait "\$sleep_pid" || true
+  sleep_pid=""
+  save_now "periodic"
+done
+WINDOW_STATE_SAVER_EOF
+
+  chmod +x "$WINDOW_STATE_SAVER"
+
+  cat > "$WINDOW_STATE_SAVER_PLIST" << WINDOW_STATE_SAVER_PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$WINDOW_STATE_SAVER_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$WINDOW_STATE_SAVER</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ExitTimeOut</key>
+  <integer>30</integer>
+  <key>StandardOutPath</key>
+  <string>$WINDOW_STATE_LOG</string>
+  <key>StandardErrorPath</key>
+  <string>$WINDOW_STATE_LOG</string>
+</dict>
+</plist>
+WINDOW_STATE_SAVER_PLIST_EOF
+
+  success "window state saver written"
 }
 
 # =============================================================================
@@ -748,6 +1347,43 @@ GOTO_SPACE_EOF
 
   chmod +x "$AEROSPACE_DIR/goto_space.sh"
   success "goto_space helper written to $AEROSPACE_DIR/goto_space.sh"
+}
+
+# =============================================================================
+# AEROSPACE LOGIN STARTER
+# Starts AeroSpace at login without hiding/suspending the app. AeroSpace's own
+# start-at-login setting is still enabled, but this gives the generated setup an
+# explicit LaunchAgent to diagnose and repair.
+# =============================================================================
+write_aerospace_start_agent() {
+  info "Writing AeroSpace login starter..."
+  mkdir -p "$HOME/Library/LaunchAgents"
+
+  cat > "$AEROSPACE_START_PLIST" << AEROSPACE_START_PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$AEROSPACE_START_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/open</string>
+    <string>-g</string>
+    <string>-a</string>
+    <string>/Applications/AeroSpace.app</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/aerospace_start.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/aerospace_start.log</string>
+</dict>
+</plist>
+AEROSPACE_START_PLIST_EOF
+
+  success "AeroSpace login starter written"
 }
 
 # =============================================================================
@@ -864,6 +1500,13 @@ sketchybar --default \
 for item in space.1 space.2 space.3 space.4 space.5 space.6 space.7 space.8 space.9 space.0 spaces_separator front_app monitor; do
   sketchybar --remove "$item" >/dev/null 2>&1 || true
 done
+for slot in 0 1 2 3 4 5 6 7 8 9; do
+  for key in 1 2 3 4 5 6 7 8 9 0; do
+    sketchybar --remove "space.$slot.$key" >/dev/null 2>&1 || true
+  done
+  sketchybar --remove "spaces_separator.$slot" >/dev/null 2>&1 || true
+  sketchybar --remove "monitor.$slot" >/dev/null 2>&1 || true
+done
 
 source "$CONFIG_DIR/items/spaces.sh"
 source "$CONFIG_DIR/items/front_app.sh"
@@ -943,37 +1586,47 @@ SPACE_ALIASES_EOF
   cat > "$SKETCHY_DIR/items/spaces.sh" << 'SPACES_ITEM_EOF'
 #!/usr/bin/env bash
 source "$CONFIG_DIR/colors.sh"
+source "$HOME/.config/aerospace/omarchy_space_state.sh"
 
-for sid in 1 2 3 4 5 6 7 8 9 0; do
-  sketchybar --add item space.$sid left \
-    --set space.$sid \
-      icon="$sid" \
-      icon.font="SF Pro:Regular:12.0" \
+monitor_count=$(omarchy_attached_monitor_count 2>/dev/null || printf '1')
+[ "$monitor_count" -gt 10 ] && monitor_count=10
+
+for slot in $(seq 0 $((monitor_count - 1))); do
+  display=$((slot + 1))
+  for sid in 1 2 3 4 5 6 7 8 9 0; do
+    name="space.$slot.$sid"
+    sketchybar --add item "$name" left \
+      --set "$name" \
+        display="$display" \
+        icon="$sid" \
+        icon.font="SF Pro:Regular:12.0" \
+        icon.color=$SUBTEXT \
+        icon.padding_left=8 \
+        icon.padding_right=4 \
+        label.drawing=off \
+        label.font="SF Pro:Medium:12.0" \
+        label.color=$SUBTEXT \
+        label.padding_right=8 \
+        background.drawing=on \
+        background.color=0x00000000 \
+        background.border_color=0x00000000 \
+        background.border_width=2 \
+        background.corner_radius=6 \
+        background.height=24 \
+        padding_left=2 \
+        padding_right=2
+  done
+
+  sketchybar --add item "spaces_separator.$slot" left \
+    --set "spaces_separator.$slot" \
+      display="$display" \
+      icon="|" \
+      icon.font="SF Pro:Light:14.0" \
       icon.color=$SUBTEXT \
-      icon.padding_left=8 \
-      icon.padding_right=4 \
-      label.drawing=off \
-      label.font="SF Pro:Medium:12.0" \
-      label.color=$SUBTEXT \
-      label.padding_right=8 \
-      background.drawing=on \
-      background.color=0x00000000 \
-      background.border_color=0x00000000 \
-      background.border_width=2 \
-      background.corner_radius=6 \
-      background.height=24 \
       padding_left=2 \
-      padding_right=2
+      padding_right=2 \
+      label.drawing=off
 done
-
-sketchybar --add item spaces_separator left \
-  --set spaces_separator \
-    icon="|" \
-    icon.font="SF Pro:Light:14.0" \
-    icon.color=$SUBTEXT \
-    padding_left=2 \
-    padding_right=2 \
-    label.drawing=off
 SPACES_ITEM_EOF
 
   # ── Front app ─────────────────────────────────────────────────────────────
@@ -994,19 +1647,27 @@ FRONTAPP_ITEM_EOF
   cat > "$SKETCHY_DIR/items/monitor.sh" << 'MONITOR_ITEM_EOF'
 #!/usr/bin/env bash
 source "$CONFIG_DIR/colors.sh"
+source "$HOME/.config/aerospace/omarchy_space_state.sh"
 
-sketchybar --add item monitor right \
-  --set monitor \
-    icon.drawing=off \
-    label="0" \
-    label.font="SF Pro:Semibold:13.0" \
-    label.color=$PEACH \
-    background.drawing=on \
-    background.color=$ITEM_BG \
-    background.corner_radius=6 \
-    background.height=24 \
-    padding_left=6 \
-    padding_right=6
+monitor_count=$(omarchy_attached_monitor_count 2>/dev/null || printf '1')
+[ "$monitor_count" -gt 10 ] && monitor_count=10
+
+for slot in $(seq 0 $((monitor_count - 1))); do
+  display=$((slot + 1))
+  sketchybar --add item "monitor.$slot" right \
+    --set "monitor.$slot" \
+      display="$display" \
+      icon.drawing=off \
+      label="$slot" \
+      label.font="SF Pro:Semibold:13.0" \
+      label.color=$PEACH \
+      background.drawing=on \
+      background.color=$ITEM_BG \
+      background.corner_radius=6 \
+      background.height=24 \
+      padding_left=6 \
+      padding_right=6
+done
 MONITOR_ITEM_EOF
 
   # ── Right-side items: wifi, battery, clock ─────────────────────────────
@@ -1054,9 +1715,8 @@ CLOCK_ITEM_EOF
 # Usage: source "$CONFIG_DIR/plugins/spaces.sh" && highlight_space <focused_workspace>
 #
 # Per-monitor spaces: workspace names are "${display_slot}${key}" (e.g. "23"
-# for monitor 2, key 3). The 10 bar slots (space.0 .. space.9) reflect the
-# workspaces for the currently focused monitor; the "monitor" indicator on
-# the right shows the 0-based display id.
+# for monitor 2, key 3). Each physical bar gets its own item namespace:
+# space.<display_slot>.<key>, scoped with SketchyBar's display property.
 
 source "$CONFIG_DIR/colors.sh"
 source "$HOME/.config/aerospace/omarchy_space_state.sh"
@@ -1065,89 +1725,124 @@ ALIAS_FILE="$HOME/.config/sketchybar/space_aliases"
 
 highlight_space() {
   local focused="$1"  # full workspace name, e.g. "23", or empty
-  local monitor key
+  local focused_monitor focused_key
   if [[ "$focused" =~ ^[0-9][0-9]$ ]]; then
-    monitor="${focused:0:1}"
-    key="${focused:1:1}"
+    focused_monitor="${focused:0:1}"
+    focused_key="${focused:1:1}"
   else
-    monitor=$(omarchy_focused_monitor_slot) || {
-      sketchybar --set monitor label="AS?" >/dev/null 2>&1 || true
+    focused_monitor=$(omarchy_focused_monitor_slot) || {
+      sketchybar --set monitor.0 label="AS?" >/dev/null 2>&1 || true
       return 0
     }
     local ws
     ws=$(omarchy_focused_workspace)
-    key="${ws:1:1}"
+    if [[ "$ws" =~ ^[0-9][0-9]$ ]]; then
+      focused_key="${ws:1:1}"
+    elif [[ "$ws" =~ ^[0-9]$ ]]; then
+      focused_key="$ws"
+    else
+      focused_key=""
+    fi
     focused="$ws"
   fi
 
-  if ! [[ "$monitor" =~ ^[0-9]+$ ]] || ! [[ "$key" =~ ^[0-9]$ ]]; then
-    sketchybar --set monitor label="AS?" >/dev/null 2>&1 || true
+  if ! [[ "$focused_monitor" =~ ^[0-9]+$ ]] || ! [[ "$focused_key" =~ ^[0-9]$ ]]; then
+    sketchybar --set monitor.0 label="AS?" >/dev/null 2>&1 || true
     return 0
   fi
 
   # One aerospace call for all windows, grouped by workspace.
   local windows
   windows=$(aerospace list-windows --all --format '%{workspace}|%{app-name}' 2>/dev/null) || {
-    sketchybar --set monitor label="AS?" >/dev/null 2>&1 || true
+    sketchybar --set monitor.0 label="AS?" >/dev/null 2>&1 || true
+    return 0
+  }
+
+  local monitors
+  monitors=$("$OMARCHY_AEROSPACE_BIN" list-monitors --format '%{monitor-id}' 2>/dev/null) || {
+    sketchybar --set monitor.0 label="AS?" >/dev/null 2>&1 || true
     return 0
   }
 
   # Build a single batched sketchybar invocation.
   local args=()
-  args+=(--set monitor label="$monitor")
 
-  for KEY in 1 2 3 4 5 6 7 8 9 0; do
-    local ws_name="${monitor}${KEY}"
-    local name="space.$KEY"
-    local label alias
-    alias=$(grep "^${ws_name}=" "$ALIAS_FILE" 2>/dev/null | cut -d= -f2-)
-    if [ -n "$alias" ]; then
-      label="$alias"
-    else
-      label=$(printf '%s\n' "$windows" \
-        | awk -F'|' -v s="$ws_name" '$1==s{print $2}' \
-        | sort -u | paste -sd "," - | sed 's/,/, /g')
-    fi
-    local has_content="$label"
-    local active_label_color=$TEXT
-    local idle_label_color=$SUBTEXT
-    if [ -z "$has_content" ]; then
-      label="[empty]"
-      active_label_color=$YELLOW
-      idle_label_color=$YELLOW
+  local slot=0 monitor_id visible_ws active_key
+  while IFS= read -r monitor_id; do
+    [ -n "$monitor_id" ] || continue
+    [ "$slot" -gt 9 ] && break
+
+    visible_ws=$("$OMARCHY_AEROSPACE_BIN" list-workspaces --monitor "$monitor_id" --visible --format '%{workspace}' 2>/dev/null | head -n 1)
+    active_key=""
+    if [[ "$visible_ws" =~ ^[0-9][0-9]$ ]] && [ "${visible_ws:0:1}" = "$slot" ]; then
+      active_key="${visible_ws:1:1}"
+    elif [[ "$visible_ws" =~ ^[0-9]$ ]]; then
+      active_key="$visible_ws"
+    elif [ "$slot" = "$focused_monitor" ]; then
+      active_key="$focused_key"
     fi
 
-    if [ "$KEY" = "$key" ]; then
-      args+=(--set "$name"
-        icon.font="SF Pro:Bold:12.0"
-        icon.color=$BLUE
-        label="$label"
-        label.drawing=on
-        label.font="SF Pro:Bold:12.0"
-        label.color=$active_label_color
-        background.color=$ITEM_BG_ACTIVE
-        background.border_color=$BLUE
-        background.border_width=2)
-    else
-      local idle_icon_color=$SUBTEXT
-      [ -n "$has_content" ] && idle_icon_color=$MAUVE
-      args+=(--set "$name"
-        icon.font="SF Pro:Regular:12.0"
-        icon.color=$idle_icon_color
-        label="$label"
-        label.drawing=on
-        label.font="SF Pro:Regular:12.0"
-        label.color=$idle_label_color
-        background.color=0x00000000
-        background.border_color=0x00000000
-        background.border_width=0)
-    fi
+    args+=(--set "monitor.$slot" label="$slot")
 
-    # Force redraw: sketchybar doesn't repaint background/border on --set
-    # alone. Toggling background.drawing does — batched in the same call.
-    args+=(--set "$name" background.drawing=off
-           --set "$name" background.drawing=on)
-  done
+    for KEY in 1 2 3 4 5 6 7 8 9 0; do
+      local ws_name="${slot}${KEY}"
+      local name="space.$slot.$KEY"
+      local label alias
+      alias=$(grep "^${ws_name}=" "$ALIAS_FILE" 2>/dev/null | cut -d= -f2-)
+      if [ -n "$alias" ]; then
+        label="$alias"
+      else
+        label=$(printf '%s\n' "$windows" \
+          | awk -F'|' -v s="$ws_name" '$1==s{print $2}' \
+          | sort -u | paste -sd "," - | sed 's/,/, /g')
+      fi
+      local has_content="$label"
+      local active_label_color=$TEXT
+      local idle_label_color=$SUBTEXT
+      if [ -z "$has_content" ]; then
+        label="[empty]"
+        active_label_color=$YELLOW
+        idle_label_color=$YELLOW
+      fi
+
+      if [ "$KEY" = "$active_key" ]; then
+        args+=(--set "$name"
+          icon.font="SF Pro:Bold:12.0"
+          icon.color=$BLUE
+          label="$label"
+          label.drawing=on
+          label.font="SF Pro:Bold:12.0"
+          label.color=$active_label_color
+          background.color=$ITEM_BG_ACTIVE
+          background.border_color=$BLUE
+          background.border_width=2)
+      else
+        local idle_icon_color=$SUBTEXT
+        [ -n "$has_content" ] && idle_icon_color=$MAUVE
+        args+=(--set "$name"
+          icon.font="SF Pro:Regular:12.0"
+          icon.color=$idle_icon_color
+          label="$label"
+          label.drawing=on
+          label.font="SF Pro:Regular:12.0"
+          label.color=$idle_label_color
+          background.color=0x00000000
+          background.border_color=0x00000000
+          background.border_width=0)
+      fi
+
+      # Force redraw: sketchybar doesn't repaint background/border on --set
+      # alone. Toggling background.drawing does — batched in the same call.
+      args+=(--set "$name" background.drawing=off
+             --set "$name" background.drawing=on)
+    done
+
+    slot=$((slot + 1))
+  done <<< "$monitors"
+
+  if [ "${#args[@]}" -eq 0 ]; then
+    return 0
+  fi
 
   sketchybar "${args[@]}"
 }
@@ -1244,16 +1939,23 @@ import CoreGraphics
 
 let showDelay: TimeInterval = 0.15
 let pollInterval: TimeInterval = 0.05
+let hideRetryInterval: TimeInterval = 1.0
 let sketchybarPath = "/opt/homebrew/bin/sketchybar"
 
-func sb(_ args: String...) {
+@discardableResult
+func sb(_ args: String...) -> Bool {
     let p = Process()
     p.launchPath = sketchybarPath
     p.arguments = args
     p.standardOutput = FileHandle.nullDevice
     p.standardError = FileHandle.nullDevice
-    try? p.run()
+    do {
+        try p.run()
+    } catch {
+        return false
+    }
     p.waitUntilExit()
+    return p.terminationStatus == 0
 }
 
 func optionPressed() -> Bool {
@@ -1261,10 +1963,22 @@ func optionPressed() -> Bool {
     return flags.rawValue & CGEventFlags.maskAlternate.rawValue != 0
 }
 
-sb("--bar", "hidden=on", "topmost=window")
-
 var visible = false
 var holdStart: Date? = nil
+var lastHideAttempt = Date.distantPast
+
+func hideBar(force: Bool = false) {
+    let now = Date()
+    guard force || now.timeIntervalSince(lastHideAttempt) >= hideRetryInterval else {
+        return
+    }
+    lastHideAttempt = now
+    if sb("--bar", "hidden=on", "topmost=window") {
+        visible = false
+    }
+}
+
+hideBar(force: true)
 
 while true {
     let pressed = optionPressed()
@@ -1279,8 +1993,9 @@ while true {
     } else if !pressed {
         holdStart = nil
         if visible {
-            sb("--bar", "hidden=on")
-            visible = false
+            hideBar(force: true)
+        } else {
+            hideBar()
         }
     }
     Thread.sleep(forTimeInterval: pollInterval)
@@ -1335,8 +2050,11 @@ BAR_TOGGLE_PLIST_EOF
 write_chrome_rehome_daemon() {
   info "Writing chrome_rehome daemon..."
   mkdir -p "$SKETCHY_DIR/plugins"
+  mkdir -p "$CHROME_REHOME_APP/Contents/MacOS"
+  local source_tmp="$CHROME_REHOME_SRC.tmp"
+  local source_changed=0
 
-  cat > "$CHROME_REHOME_SRC" << 'CHROME_REHOME_SWIFT_EOF'
+  cat > "$source_tmp" << 'CHROME_REHOME_SWIFT_EOF'
 import AppKit
 import ApplicationServices
 
@@ -1346,6 +2064,8 @@ func _AXUIElementGetWindow(_ element: AXUIElement, _ windowId: UnsafeMutablePoin
 let aerospacePath = "/opt/homebrew/bin/aerospace"
 let chromeBundleID = "com.google.Chrome"
 let scanOrder: [String] = ["1","2","3","4","5","6","7","8","9","0"]
+let aerospaceStartupAttempts = 60
+let windowListingAttempts = 60
 
 func log(_ msg: String) {
     let stamp = ISO8601DateFormatter().string(from: Date())
@@ -1368,6 +2088,25 @@ func sh(_ args: [String]) -> String {
     return String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
 }
 
+func aerospaceAvailable() -> Bool {
+    !sh(["list-monitors", "--format", "%{monitor-id}"])
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .isEmpty
+}
+
+func waitForAerospace() -> Bool {
+    for attempt in 0..<aerospaceStartupAttempts {
+        if aerospaceAvailable() {
+            if attempt > 0 {
+                log("AeroSpace became reachable after \(attempt) seconds")
+            }
+            return true
+        }
+        Thread.sleep(forTimeInterval: 1.0)
+    }
+    return false
+}
+
 func activeMonitorSlotCount() -> Int {
     let out = sh(["list-monitors", "--format", "%{monitor-id}"])
         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1386,7 +2125,12 @@ func firstEmptyOnMonitor(_ monitor: String, skip currentWs: String) -> String? {
 }
 
 func handleNewWindow(_ wid: CGWindowID) {
-    for attempt in 0..<5 {
+    guard waitForAerospace() else {
+        log("Chrome window \(wid): AeroSpace was not reachable; leaving in place")
+        return
+    }
+
+    for attempt in 0..<windowListingAttempts {
         let listing = sh(["list-windows", "--all", "--format", "%{window-id}|%{workspace}|%{app-name}"])
         var currentWs: String? = nil
         struct Row { let id: UInt32; let ws: String; let app: String }
@@ -1399,7 +2143,7 @@ func handleNewWindow(_ wid: CGWindowID) {
             if id == wid { currentWs = row.ws }
         }
         guard let ws = currentWs else {
-            if attempt < 4 { Thread.sleep(forTimeInterval: 0.04) }
+            if attempt < windowListingAttempts - 1 { Thread.sleep(forTimeInterval: 0.5) }
             continue
         }
         let siblingChromeOnWs = rows.contains {
@@ -1443,32 +2187,50 @@ func detachObserver() {
     currentPid = 0
 }
 
-func attachObserver(_ pid: pid_t) {
+@discardableResult
+func attachObserver(_ pid: pid_t) -> Bool {
     detachObserver()
     var observer: AXObserver?
     let createResult = AXObserverCreate(pid, axCallback, &observer)
     guard createResult == .success, let obs = observer else {
         log("AXObserverCreate failed for pid \(pid): \(createResult.rawValue)")
-        return
+        return false
     }
     let app = AXUIElementCreateApplication(pid)
     let addResult = AXObserverAddNotification(obs, app, kAXWindowCreatedNotification as CFString, nil)
     if addResult != .success {
         log("AXObserverAddNotification failed for pid \(pid): \(addResult.rawValue)")
-        return
+        return false
     }
     CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(obs), .defaultMode)
     currentObserver = obs
     currentPid = pid
     log("attached AX observer to Chrome pid \(pid)")
+    return true
 }
 
-let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-let trusted = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
-log("AXIsProcessTrusted: \(trusted)")
+func chromeApp() -> NSRunningApplication? {
+    NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == chromeBundleID }
+}
 
-if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == chromeBundleID }) {
-    attachObserver(app.processIdentifier)
+func trustedForAX(prompt: Bool = false) -> Bool {
+    let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+    return AXIsProcessTrustedWithOptions([promptKey: prompt] as CFDictionary)
+}
+
+func attachChromeIfPossible(prompt: Bool = false) {
+    guard currentObserver == nil else { return }
+    let trusted = trustedForAX(prompt: prompt)
+    log("AXIsProcessTrusted: \(trusted)")
+    guard trusted else { return }
+    guard let app = chromeApp() else { return }
+    _ = attachObserver(app.processIdentifier)
+}
+
+attachChromeIfPossible(prompt: true)
+
+Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
+    attachChromeIfPossible()
 }
 
 NSWorkspace.shared.notificationCenter.addObserver(
@@ -1476,7 +2238,11 @@ NSWorkspace.shared.notificationCenter.addObserver(
 ) { notif in
     if let app = notif.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
        app.bundleIdentifier == chromeBundleID {
-        attachObserver(app.processIdentifier)
+        if trustedForAX(prompt: true) {
+            _ = attachObserver(app.processIdentifier)
+        } else {
+            log("Chrome launched, but chrome_rehome is not Accessibility-trusted")
+        }
     }
 }
 
@@ -1494,14 +2260,56 @@ log("chrome_rehome started")
 RunLoop.main.run()
 CHROME_REHOME_SWIFT_EOF
 
+  if [[ -f "$CHROME_REHOME_SRC" ]] && cmp -s "$source_tmp" "$CHROME_REHOME_SRC"; then
+    rm -f "$source_tmp"
+  else
+    mv "$source_tmp" "$CHROME_REHOME_SRC"
+    source_changed=1
+  fi
+
   if ! command -v swiftc &>/dev/null; then
     warn "swiftc not found — install Xcode Command Line Tools (xcode-select --install)"
     return 1
   fi
 
-  info "Compiling chrome_rehome..."
-  swiftc -O "$CHROME_REHOME_SRC" -o "$CHROME_REHOME_BIN"
-  chmod +x "$CHROME_REHOME_BIN"
+  if [[ "$source_changed" -eq 1 || ! -x "$CHROME_REHOME_BIN" ]]; then
+    info "Compiling chrome_rehome..."
+    swiftc -O "$CHROME_REHOME_SRC" -o "$CHROME_REHOME_BIN"
+    chmod +x "$CHROME_REHOME_BIN"
+  else
+    info "chrome_rehome source unchanged; keeping existing binary for Accessibility trust"
+  fi
+  cat > "$CHROME_REHOME_APP/Contents/Info.plist" << CHROME_REHOME_INFO_PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key>
+  <string>chrome_rehome</string>
+  <key>CFBundleIdentifier</key>
+  <string>$CHROME_REHOME_LABEL</string>
+  <key>CFBundleName</key>
+  <string>Omarchy Chrome Rehome</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>LSBackgroundOnly</key>
+  <true/>
+  <key>NSPrincipalClass</key>
+  <string>NSApplication</string>
+</dict>
+</plist>
+CHROME_REHOME_INFO_PLIST_EOF
+
+  if [[ "$source_changed" -eq 1 ]] || ! /usr/bin/codesign --verify "$CHROME_REHOME_APP" >/dev/null 2>&1; then
+    /usr/bin/codesign --force --sign - --identifier "$CHROME_REHOME_LABEL" "$CHROME_REHOME_APP" >/dev/null 2>&1 || \
+      warn "Could not ad-hoc sign $CHROME_REHOME_APP"
+  fi
+  xattr -dr com.apple.quarantine "$CHROME_REHOME_APP" 2>/dev/null || true
+  xattr -dr com.apple.provenance "$CHROME_REHOME_APP" 2>/dev/null || true
 
   mkdir -p "$HOME/Library/LaunchAgents"
   cat > "$CHROME_REHOME_PLIST" << CHROME_REHOME_PLIST_EOF
@@ -1571,6 +2379,10 @@ usage() {
   echo "  ./install.sh refresh   rewrite generated configs without reinstalling packages"
   echo "  ./install.sh repair-spaces"
   echo "                         move windows off detached monitor workspaces"
+  echo "  ./install.sh save-window-state"
+  echo "                         save current window/workspace layout for reboot restore"
+  echo "  ./install.sh restore-window-state"
+  echo "                         restore the saved window/workspace layout now"
   echo "  ./install.sh revert    undo everything, restore previous state"
   echo "  ./install.sh status    show install and service status"
   echo ""
@@ -1580,6 +2392,8 @@ case "${1:-}" in
   install)       cmd_install       ;;
   refresh)       cmd_refresh       ;;
   repair-spaces) cmd_repair_spaces ;;
+  save-window-state) cmd_save_window_state ;;
+  restore-window-state) cmd_restore_window_state ;;
   revert)        cmd_revert        ;;
   status)        cmd_status        ;;
   *)             usage; exit 1     ;;
