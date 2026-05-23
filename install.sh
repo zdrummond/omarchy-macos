@@ -94,7 +94,6 @@ cmd_install() {
   write_skhd_config
   write_sketchybar_config
   write_borders_config
-  write_bar_toggle_daemon
   write_chrome_rehome_daemon
 
   header "Tuning macOS for instant window movement..."
@@ -149,7 +148,6 @@ cmd_refresh() {
   write_skhd_config
   write_sketchybar_config
   write_borders_config
-  write_bar_toggle_daemon
   write_chrome_rehome_daemon
 
   header "Restarting services..."
@@ -263,7 +261,6 @@ cmd_status() {
   check_service "borders"
   check_launch_agent "$AEROSPACE_START_LABEL"
   check_launch_agent "$WINDOW_STATE_SAVER_LABEL"
-  check_launch_agent "$BAR_TOGGLE_LABEL"
   check_launch_agent "$CHROME_REHOME_LABEL"
 
   echo ""
@@ -430,10 +427,9 @@ start_services() {
     brew services start borders 2>/dev/null || \
     warn "Could not auto-start borders"
 
-  info "Starting bar_toggle daemon..."
+  info "Disabling bar_toggle daemon..."
   launchctl unload "$BAR_TOGGLE_PLIST" 2>/dev/null || true
-  launchctl load "$BAR_TOGGLE_PLIST" 2>/dev/null || \
-    warn "Could not load bar_toggle LaunchAgent"
+  rm -f "$BAR_TOGGLE_PLIST"
 
   info "Starting chrome_rehome daemon..."
   launchctl unload "$CHROME_REHOME_PLIST" 2>/dev/null || true

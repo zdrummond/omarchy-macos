@@ -41,20 +41,11 @@ Workspaces 1–10 with automatic app assignment:
 - **Focus follows mouse** (lazy center on window focus change)
 - **Exact reboot restore** is snapshot-based. `./install.sh save-window-state` captures the current AeroSpace window list, including window id, workspace, app name, app bundle id, and title, to `~/.config/aerospace/omarchy_window_state.json`. A LaunchAgent refreshes that snapshot every 15 minutes and performs one best-effort save when macOS logs out or shuts down. App-assigned windows are canonicalized to their declared workspaces before save/restore so temporary drift cannot become reboot state. On login/startup, `startup_restore.sh` waits for AeroSpace, repairs detached-monitor workspaces, then retries matching restored windows by window id + app identity, app bundle id + title, app name + title, and app identity for canonical app-assigned windows before moving them back to their saved workspaces.
 - **SketchyBar** shows only the workspace set for the monitor each bar is on; active workspaces are highlighted in blue, inactive workspaces with apps are mauve, and empty workspaces are dimmed
-- **Bar visibility is press-to-peek.** SketchyBar is kept hidden and only appears while Option (⌥) is held for ≥150ms — mirroring Hyprland's "bar on SUPER" feel and keeping the screen chrome-free the rest of the time.
+- **Bar visibility is always on.** SketchyBar stays visible; press-to-peek is disabled because the modifier polling/repaint path can make SketchyBar unresponsive on multi-monitor setups.
 - **Front app label** in bar shows `<workspace> <app name>`
 - **Right-side bar** has wifi SSID, battery level with color-coded icons, and clock
 - **JankyBorders** draws a 3px mauve border on the focused window, surface0 on all others
 - **Normalization** flattens nested containers and corrects opposite orientations automatically
-
-## Bar Toggle Daemon (`bar_toggle`)
-
-A tiny Swift binary compiled at install time and loaded as a LaunchAgent. It exists to solve two problems that can't be handled in SketchyBar or aerospace config alone:
-
-1. **Press-to-peek visibility.** Neither SketchyBar nor skhd can react to a modifier being held. The daemon polls `CGEventSource.flagsState` every 50ms, and after Option has been held for 150ms it runs `sketchybar --bar hidden=off`. On release it immediately hides the bar again, and while Option is not held it retries `hidden=on` once per second so login-time SketchyBar startup races or config reloads cannot leave the bar stuck visible. The 150ms debounce keeps the bar from flashing during quick `⌥+key` combos (e.g. `⌥+1` to switch workspace).
-2. **Stale-highlight workaround.** SketchyBar has a known quirk where `--set` against a hidden item updates its data model but never repaints its background/border — so by the time the bar un-hides, the "focused space" highlight is whatever it was the last time the bar was visible. To force a fresh repaint, the daemon fires `sketchybar --trigger front_app_switched` right after un-hiding. The `front_app` plugin re-runs while the bar is actually visible, calls `highlight_space` with the current aerospace workspace, and the drawing-toggle workaround in `spaces.sh` then paints correctly.
-
-The daemon is implemented in Swift (not Python) so it has zero runtime dependencies beyond Xcode Command Line Tools, which are already a Homebrew prerequisite. Source lives at `~/.config/sketchybar/plugins/bar_toggle.swift`; the compiled binary at `~/.config/sketchybar/plugins/bar_toggle`; the LaunchAgent at `~/Library/LaunchAgents/com.omarchy-macos.bar_toggle.plist`.
 
 ## Installer Behavior
 
@@ -62,7 +53,7 @@ The daemon is implemented in Swift (not Python) so it has zero runtime dependenc
 - Writes all config files inline from the script (no external dotfiles repo required)
 - Disables macOS window animations (`NSAutomaticWindowAnimationsEnabled`, `NSWindowResizeTime`)
 - Starts all four services via `brew services`
-- Compiles the `bar_toggle` Swift daemon via `swiftc` and loads it as a LaunchAgent
+- Keeps SketchyBar visible and unloads the old `bar_toggle` LaunchAgent if present
 - Writes a dependency-light Perl window-state helper using macOS's system Perl and `JSON::PP`; no extra package is required for saved reboot restore
 - Loads a window-state saver LaunchAgent that saves every 15 minutes and traps launchd termination for best-effort logout/shutdown saves
 - Leaves an install marker at `~/.omarchy-macos-backup/.installed` to prevent duplicate installs
