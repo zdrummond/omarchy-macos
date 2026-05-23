@@ -766,6 +766,30 @@ omarchy_focused_monitor_slot() {
   return 1
 }
 
+omarchy_normalize_workspace_for_slot() {
+  local workspace="$1"
+  local slot="$2"
+  if [[ "$workspace" =~ ^[0-9][0-9]$ ]]; then
+    printf '%s\n' "$workspace"
+  elif [[ "$workspace" =~ ^[0-9]$ ]] && [[ "$slot" =~ ^[0-9]+$ ]]; then
+    printf '%s%s\n' "$slot" "$workspace"
+  else
+    return 1
+  fi
+}
+
+omarchy_normalize_focused_workspace() {
+  local workspace="$1"
+  local slot
+  if [[ "$workspace" =~ ^[0-9][0-9]$ ]]; then
+    printf '%s\n' "$workspace"
+    return 0
+  fi
+  [[ "$workspace" =~ ^[0-9]$ ]] || return 1
+  slot=$(omarchy_focused_monitor_slot) || return 1
+  printf '%s%s\n' "$slot" "$workspace"
+}
+
 omarchy_focused_workspace() {
   "$OMARCHY_AEROSPACE_BIN" list-workspaces --focused 2>/dev/null | head -n 1
 }
@@ -795,6 +819,23 @@ omarchy_is_active_slot() {
 omarchy_repair_detached_monitor_workspaces() {
   local count
   count=$(omarchy_attached_monitor_count) || return 1
+
+  local monitor_id legacy_slot visible_workspace legacy_target legacy_windows legacy_window_id
+  legacy_slot=0
+  while IFS= read -r monitor_id; do
+    [ -n "$monitor_id" ] || continue
+    visible_workspace=$("$OMARCHY_AEROSPACE_BIN" list-workspaces --monitor "$monitor_id" --visible --format '%{workspace}' 2>/dev/null | head -n 1) || true
+    if [[ "$visible_workspace" =~ ^[0-9]$ ]]; then
+      legacy_target="${legacy_slot}${visible_workspace}"
+      legacy_windows=$("$OMARCHY_AEROSPACE_BIN" list-windows --workspace "$visible_workspace" --format '%{window-id}' 2>/dev/null) || legacy_windows=""
+      while IFS= read -r legacy_window_id; do
+        [[ "$legacy_window_id" =~ ^[0-9]+$ ]] || continue
+        "$OMARCHY_AEROSPACE_BIN" move-node-to-workspace --window-id "$legacy_window_id" "$legacy_target" >/dev/null 2>&1 || true
+      done <<< "$legacy_windows"
+      "$OMARCHY_AEROSPACE_BIN" move-workspace-to-monitor --workspace "$legacy_target" "$monitor_id" >/dev/null 2>&1 || true
+    fi
+    legacy_slot=$((legacy_slot + 1))
+  done < <(omarchy_monitor_ids_by_slot)
 
   local rows line window_id workspace slot key target
   rows=$("$OMARCHY_AEROSPACE_BIN" list-windows --all --format '%{window-id}|%{workspace}' 2>/dev/null) || return 1
@@ -1814,15 +1855,12 @@ highlight_space() {
     for KEY in 1 2 3 4 5 6 7 8 9 0; do
       local ws_name="${slot}${KEY}"
       local name="space.$slot.$KEY"
-      local label alias
-      alias=$(grep "^${ws_name}=" "$ALIAS_FILE" 2>/dev/null | cut -d= -f2-)
-      if [ -n "$alias" ]; then
-        label="$alias"
-      else
-        label=$(printf '%s\n' "$windows" \
-          | awk -F'|' -v s="$ws_name" '$1==s{print $2}' \
-          | sort -u | paste -sd "," - | sed 's/,/, /g')
-      fi
+      local label legacy_ws
+      legacy_ws=""
+      [ "$visible_ws" = "$KEY" ] && legacy_ws="$KEY"
+      label=$(printf '%s\n' "$windows" \
+        | awk -F'|' -v s="$ws_name" -v legacy="$legacy_ws" '$1==s || (legacy != "" && $1==legacy){print $2}' \
+        | sort -u | paste -sd "," - | sed 's/,/, /g')
       local has_content="$label"
       local active_label_color=$TEXT
       local idle_label_color=$SUBTEXT
@@ -1884,8 +1922,9 @@ if [ -z "$APP" ]; then
   APP=$(osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true' 2>/dev/null)
 fi
 WS=$(omarchy_focused_workspace)
-if [[ "$WS" =~ ^[0-9][0-9]$ ]]; then
-  sketchybar --set "$NAME" label="$WS $APP"
+DISPLAY_WS=$(omarchy_normalize_focused_workspace "$WS" 2>/dev/null || true)
+if [[ "$DISPLAY_WS" =~ ^[0-9][0-9]$ ]]; then
+  sketchybar --set "$NAME" label="$DISPLAY_WS $APP"
 else
   sketchybar --set "$NAME" label="AS? $APP"
 fi
