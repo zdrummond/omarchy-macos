@@ -636,7 +636,7 @@ alt-shift-r = 'reload-config'
 # ── Workspace cycle ───────────────────────────────────────────────────────
 # ⌥ + tab → next workspace
 # ⌥ + shift + tab → previous workspace
-alt-tab       = 'workspace-back-and-forth'
+alt-tab       = 'exec-and-forget ~/.config/aerospace/workspace_back_and_forth.sh'
 alt-shift-tab = 'move-workspace-to-monitor --wrap-around next'
 
 # ── Move to next/prev monitor ─────────────────────────────────────────────
@@ -1401,11 +1401,21 @@ case "$ACTION" in
     ;;
   focus|*)
     aerospace workspace "$TARGET"
+    "$HOME/.config/sketchybar/plugins/hide_bar.sh" >/dev/null 2>&1 || true
     ;;
 esac
 GOTO_SPACE_EOF
 
   chmod +x "$AEROSPACE_DIR/goto_space.sh"
+  cat > "$AEROSPACE_DIR/workspace_back_and_forth.sh" << 'WORKSPACE_BACK_AND_FORTH_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+aerospace workspace-back-and-forth
+"$HOME/.config/sketchybar/plugins/hide_bar.sh" >/dev/null 2>&1 || true
+WORKSPACE_BACK_AND_FORTH_EOF
+
+  chmod +x "$AEROSPACE_DIR/workspace_back_and_forth.sh"
   success "goto_space helper written to $AEROSPACE_DIR/goto_space.sh"
 }
 
@@ -1921,14 +1931,23 @@ set -euo pipefail
 STATE_FILE="${XDG_RUNTIME_DIR:-/tmp}/omarchy_sketchybar_visible"
 
 if [[ -f "$STATE_FILE" ]] && [[ "$(cat "$STATE_FILE" 2>/dev/null)" = "1" ]]; then
-  sketchybar --bar hidden=on
-  printf '0' > "$STATE_FILE"
+  "$HOME/.config/sketchybar/plugins/hide_bar.sh"
 else
   sketchybar --bar hidden=off topmost=window
   sketchybar --trigger front_app_switched >/dev/null 2>&1 || true
   printf '1' > "$STATE_FILE"
 fi
 TOGGLE_BAR_PLUGIN_EOF
+
+  cat > "$SKETCHY_DIR/plugins/hide_bar.sh" << 'HIDE_BAR_PLUGIN_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATE_FILE="${XDG_RUNTIME_DIR:-/tmp}/omarchy_sketchybar_visible"
+
+sketchybar --bar hidden=on
+printf '0' > "$STATE_FILE"
+HIDE_BAR_PLUGIN_EOF
 
   cat > "$SKETCHY_DIR/plugins/front_app.sh" << 'FRONTAPP_PLUGIN_EOF'
 #!/usr/bin/env bash
