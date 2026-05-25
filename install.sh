@@ -788,7 +788,12 @@ omarchy_monitor_ids_by_slot() {
     fi
   done <<< "$rows"
 
-  printf '%s\n' "${built_in_ids[@]}" "${external_ids[@]}" | awk 'NF'
+  if ((${#built_in_ids[@]})); then
+    printf '%s\n' "${built_in_ids[@]}"
+  fi
+  if ((${#external_ids[@]})); then
+    printf '%s\n' "${external_ids[@]}"
+  fi
 }
 
 omarchy_slot_for_monitor_id() {
@@ -898,9 +903,11 @@ omarchy_switch_workspace_on_slot_monitor() {
 
   "$OMARCHY_AEROSPACE_BIN" workspace "$workspace"
 
-  for visible_workspace in "${restore_workspaces[@]}"; do
-    "$OMARCHY_AEROSPACE_BIN" workspace "$visible_workspace" >/dev/null 2>&1 || true
-  done
+  if ((${#restore_workspaces[@]})); then
+    for visible_workspace in "${restore_workspaces[@]}"; do
+      "$OMARCHY_AEROSPACE_BIN" workspace "$visible_workspace" >/dev/null 2>&1 || true
+    done
+  fi
 
   "$OMARCHY_AEROSPACE_BIN" focus-monitor "$monitor_id" >/dev/null 2>&1 || true
   "$OMARCHY_AEROSPACE_BIN" move-mouse monitor-lazy-center >/dev/null 2>&1 || true
