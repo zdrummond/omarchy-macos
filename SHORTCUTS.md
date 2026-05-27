@@ -50,6 +50,9 @@ All shortcuts use **Option (⌥)** as the modifier key, mirroring the SUPER key 
 | ⌥ + Shift + Space | Toggle floating/tiling |
 | ⌥ + Shift + Q | Close focused window |
 
+Crowded workspaces automatically switch to accordion layout when the estimated
+split width falls below 640 points per window.
+
 ## App Launchers (skhd)
 
 | Shortcut | Action |

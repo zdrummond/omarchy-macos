@@ -1,7 +1,7 @@
 # omarchy-macos
 
 Hyprland/Omarchy-style window management for macOS using native tools:
-AeroSpace, skhd, SketchyBar, and JankyBorders.
+AeroSpace, skhd, and SketchyBar. JankyBorders is optional.
 
 ## Install
 
@@ -11,10 +11,22 @@ Run the normal installer:
 ./install.sh install
 ```
 
+Install the optional focused-window border service:
+
+```sh
+OMARCHY_ENABLE_BORDERS=1 ./install.sh install
+```
+
 Check status:
 
 ```sh
 ./install.sh status
+```
+
+Regenerate and restart the desktop shortcut cheatsheet widget:
+
+```sh
+./install.sh shortcuts-widget
 ```
 
 The exact AeroSpace window/workspace layout is saved automatically every 15

@@ -75,6 +75,7 @@ sections = [
         ("⌥ F", "Fullscreen"),
         ("⌥ E", "Toggle split direction"),
         ("⌥ S", "Accordion (stacked)"),
+        ("auto", "Accordion when narrow"),
         ("⌥ ⇧ Space", "Float / tile toggle"),
         ("⌥ ⇧ Q", "Close window"),
     ]),

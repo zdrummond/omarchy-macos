@@ -14,7 +14,7 @@
 #   aerospace    — tiling window manager (i3-style)
 #   skhd         — global hotkey daemon for app launchers
 #   sketchybar   — scriptable status bar (waybar equivalent)
-#   jankyborders — colored border on focused window
+#   jankyborders — optional colored border on focused window
 # =============================================================================
 
 set -euo pipefail
@@ -37,9 +37,8 @@ SKHD_DIR="$HOME/.config/skhd"
 SKHD_CFG="$SKHD_DIR/skhdrc"
 SKETCHY_DIR="$HOME/.config/sketchybar"
 BORDERS_DIR="$HOME/.config/borders"
+BORDERS_INSTALLED_MARKER="$BACKUP_DIR/.borders-installed"
 
-BAR_TOGGLE_BIN="$SKETCHY_DIR/plugins/bar_toggle"
-BAR_TOGGLE_SRC="$SKETCHY_DIR/plugins/bar_toggle.swift"
 BAR_TOGGLE_LABEL="com.omarchy-macos.bar_toggle"
 BAR_TOGGLE_PLIST="$HOME/Library/LaunchAgents/$BAR_TOGGLE_LABEL.plist"
 
@@ -52,14 +51,28 @@ CHROME_REHOME_APP="$HOME/Applications/Omarchy Chrome Rehome.app"
 CHROME_REHOME_BIN="$CHROME_REHOME_APP/Contents/MacOS/chrome_rehome"
 CHROME_REHOME_PLIST="$HOME/Library/LaunchAgents/$CHROME_REHOME_LABEL.plist"
 
+SHORTCUT_WIDGET_SRC="$AEROSPACE_DIR/shortcut_widget.swift"
+SHORTCUT_WIDGET_LABEL="com.omarchy-macos.shortcut_widget"
+SHORTCUT_WIDGET_APP="$HOME/Applications/Omarchy Shortcuts Widget.app"
+SHORTCUT_WIDGET_BIN="$SHORTCUT_WIDGET_APP/Contents/MacOS/shortcut_widget"
+SHORTCUT_WIDGET_PLIST="$HOME/Library/LaunchAgents/$SHORTCUT_WIDGET_LABEL.plist"
+
 WINDOW_STATE_FILE="$AEROSPACE_DIR/omarchy_window_state.json"
 WINDOW_STATE_HELPER="$AEROSPACE_DIR/window_state.pl"
 WINDOW_STATE_WRAPPER="$AEROSPACE_DIR/window_state.sh"
 WINDOW_STATE_LOG="/tmp/omarchy_window_state.log"
 WINDOW_STATE_SAVER="$AEROSPACE_DIR/window_state_saver.sh"
+WINDOW_STATE_DEBOUNCED_SAVER="$AEROSPACE_DIR/window_state_debounced_save.sh"
+WINDOW_STATE_MONITOR_MOVE_HELPER="$AEROSPACE_DIR/move_node_to_monitor_and_save.sh"
+RESPONSIVE_LAYOUT_HELPER="$AEROSPACE_DIR/responsive_layout.sh"
+MONITOR_FRAME_SRC="$AEROSPACE_DIR/monitor_frame.swift"
+MONITOR_FRAME_BIN="$AEROSPACE_DIR/monitor_frame"
 WINDOW_STATE_SAVE_INTERVAL_SECONDS=900
 WINDOW_STATE_SAVER_LABEL="com.omarchy-macos.window_state_saver"
 WINDOW_STATE_SAVER_PLIST="$HOME/Library/LaunchAgents/$WINDOW_STATE_SAVER_LABEL.plist"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SHORTCUT_IMAGE_SCRIPT="$SCRIPT_DIR/generate_shortcut_image.py"
+SHORTCUT_IMAGE_OUTPUT="$HOME/Desktop/omarchy-shortcuts.png"
 
 INSTALLED_MARKER="$BACKUP_DIR/.installed"
 
@@ -82,7 +95,12 @@ cmd_install() {
   brew_install "aerospace"    "nikitabobko/tap/aerospace"
   brew_install "skhd"         "koekeishiya/formulae/skhd"
   brew_install "sketchybar"   "FelixKratz/formulae/sketchybar"
-  brew_install "jankyborders" "FelixKratz/formulae/borders"
+  if borders_enabled; then
+    brew_install "jankyborders" "FelixKratz/formulae/borders"
+    touch "$BORDERS_INSTALLED_MARKER"
+  else
+    info "Skipping optional jankyborders (set OMARCHY_ENABLE_BORDERS=1 to install)"
+  fi
 
   header "Writing configuration files..."
   write_aerospace_config
@@ -93,8 +111,9 @@ cmd_install() {
   write_aerospace_start_agent
   write_skhd_config
   write_sketchybar_config
-  write_borders_config
+  write_borders_config_if_enabled
   write_chrome_rehome_daemon
+  write_shortcut_desktop_widget
 
   header "Tuning macOS for instant window movement..."
   defaults write NSGlobalDomain NSAutomaticWindowAnimationsEnabled -bool false
@@ -147,8 +166,9 @@ cmd_refresh() {
   write_aerospace_start_agent
   write_skhd_config
   write_sketchybar_config
-  write_borders_config
+  write_borders_config_if_enabled
   write_chrome_rehome_daemon
+  write_shortcut_desktop_widget
 
   header "Restarting services..."
   stop_services
@@ -157,6 +177,19 @@ cmd_refresh() {
   echo ""
   success "Configuration refreshed."
   echo "Run './install.sh repair-spaces' once after AeroSpace is healthy to move windows off detached monitor workspaces."
+}
+
+# =============================================================================
+# SHORTCUT DESKTOP WIDGET
+# =============================================================================
+cmd_shortcuts_widget() {
+  header "omarchy-macos shortcut widget"
+  write_shortcut_desktop_widget
+  if [[ -f "$SHORTCUT_WIDGET_PLIST" ]]; then
+    launchctl unload "$SHORTCUT_WIDGET_PLIST" 2>/dev/null || true
+    launchctl load "$SHORTCUT_WIDGET_PLIST" 2>/dev/null || \
+      warn "Could not load shortcut desktop widget LaunchAgent"
+  fi
 }
 
 # =============================================================================
@@ -198,20 +231,191 @@ cmd_restore_window_state() {
   "$WINDOW_STATE_WRAPPER" restore
 }
 
+write_shortcut_desktop_widget() {
+  mkdir -p "$AEROSPACE_DIR" "$SHORTCUT_WIDGET_APP/Contents/MacOS" "$HOME/Library/LaunchAgents"
+
+  if [[ ! -f "$SHORTCUT_IMAGE_SCRIPT" ]]; then
+    warn "Shortcut widget generator not found at $SHORTCUT_IMAGE_SCRIPT"
+    return 0
+  fi
+  if ! command -v python3 &>/dev/null; then
+    warn "python3 not found — could not regenerate $SHORTCUT_IMAGE_OUTPUT"
+    return 0
+  fi
+  if ! python3 -c 'import PIL' >/dev/null 2>&1; then
+    warn "Python Pillow is not installed — could not regenerate $SHORTCUT_IMAGE_OUTPUT"
+    return 0
+  fi
+
+  info "Regenerating shortcut desktop image..."
+  python3 "$SHORTCUT_IMAGE_SCRIPT" >/dev/null
+  success "Shortcut desktop image written to $SHORTCUT_IMAGE_OUTPUT"
+
+  cat > "$SHORTCUT_WIDGET_SRC" << SHORTCUT_WIDGET_SWIFT_EOF
+import AppKit
+
+let imagePath = NSHomeDirectory() + "/Desktop/omarchy-shortcuts.png"
+let margin = CGFloat(Double(ProcessInfo.processInfo.environment["OMARCHY_SHORTCUT_WIDGET_MARGIN"] ?? "24") ?? 24)
+let bottomOffset = CGFloat(Double(ProcessInfo.processInfo.environment["OMARCHY_SHORTCUT_WIDGET_BOTTOM"] ?? "40") ?? 40)
+let maxWidth = CGFloat(Double(ProcessInfo.processInfo.environment["OMARCHY_SHORTCUT_WIDGET_WIDTH"] ?? "560") ?? 560)
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    var window: NSWindow?
+    var imageView: NSImageView?
+    var lastModified: Date?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+        render()
+        Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            self?.renderIfChanged()
+        }
+    }
+
+    func renderIfChanged() {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: imagePath)
+        let modified = attrs?[.modificationDate] as? Date
+        if modified != lastModified {
+            render()
+        }
+    }
+
+    func render() {
+        guard let image = NSImage(contentsOfFile: imagePath),
+              let screen = NSScreen.main ?? NSScreen.screens.first else {
+            window?.orderOut(nil)
+            return
+        }
+
+        let attrs = try? FileManager.default.attributesOfItem(atPath: imagePath)
+        lastModified = attrs?[.modificationDate] as? Date
+
+        let scale = min(1.0, maxWidth / max(image.size.width, 1.0))
+        let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+        let visible = screen.visibleFrame
+        let origin = NSPoint(
+            x: visible.maxX - size.width - margin,
+            y: visible.minY + bottomOffset
+        )
+        let frame = NSRect(origin: origin, size: size)
+
+        if window == nil {
+            let win = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            win.isOpaque = false
+            win.backgroundColor = .clear
+            win.hasShadow = false
+            win.ignoresMouseEvents = true
+            win.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+            win.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
+
+            let view = NSImageView(frame: NSRect(origin: .zero, size: size))
+            view.imageScaling = .scaleProportionallyUpOrDown
+            view.alphaValue = 0.92
+            view.image = image
+            win.contentView = view
+            imageView = view
+            window = win
+        } else {
+            window?.setFrame(frame, display: true)
+            imageView?.frame = NSRect(origin: .zero, size: size)
+            imageView?.image = image
+        }
+
+        window?.orderFrontRegardless()
+    }
+}
+
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.run()
+SHORTCUT_WIDGET_SWIFT_EOF
+
+  if ! command -v swiftc &>/dev/null; then
+    warn "swiftc not found — shortcut image was generated, but desktop widget app was not built"
+    return 0
+  fi
+
+  info "Compiling shortcut desktop widget..."
+  swiftc -O "$SHORTCUT_WIDGET_SRC" -o "$SHORTCUT_WIDGET_BIN"
+  chmod +x "$SHORTCUT_WIDGET_BIN"
+
+  cat > "$SHORTCUT_WIDGET_APP/Contents/Info.plist" << SHORTCUT_WIDGET_INFO_PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key>
+  <string>shortcut_widget</string>
+  <key>CFBundleIdentifier</key>
+  <string>$SHORTCUT_WIDGET_LABEL</string>
+  <key>CFBundleName</key>
+  <string>Omarchy Shortcuts Widget</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSPrincipalClass</key>
+  <string>NSApplication</string>
+</dict>
+</plist>
+SHORTCUT_WIDGET_INFO_PLIST_EOF
+
+  /usr/bin/codesign --force --sign - --identifier "$SHORTCUT_WIDGET_LABEL" "$SHORTCUT_WIDGET_APP" >/dev/null 2>&1 || \
+    warn "Could not ad-hoc sign $SHORTCUT_WIDGET_APP"
+  xattr -dr com.apple.quarantine "$SHORTCUT_WIDGET_APP" 2>/dev/null || true
+  xattr -dr com.apple.provenance "$SHORTCUT_WIDGET_APP" 2>/dev/null || true
+
+  cat > "$SHORTCUT_WIDGET_PLIST" << SHORTCUT_WIDGET_PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$SHORTCUT_WIDGET_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$SHORTCUT_WIDGET_BIN</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/omarchy_shortcut_widget.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/omarchy_shortcut_widget.log</string>
+</dict>
+</plist>
+SHORTCUT_WIDGET_PLIST_EOF
+
+  success "Shortcut desktop widget written"
+}
+
 # =============================================================================
 # REVERT
 # =============================================================================
 cmd_revert() {
   header "omarchy-macos revert"
+  local managed_borders=0
 
   if [[ ! -f "$INSTALLED_MARKER" ]]; then
     warn "omarchy-macos doesn't appear to be installed (no marker found)."
     read -r -p "Force revert anyway? [y/N] " ans
     [[ "$ans" =~ ^[Yy]$ ]] || exit 0
   fi
+  if [[ -f "$BORDERS_INSTALLED_MARKER" ]] || borders_enabled; then
+    managed_borders=1
+  elif [[ -f "$BORDERS_DIR/bordersrc" ]] && grep -q "Active border = Catppuccin Mauve" "$BORDERS_DIR/bordersrc"; then
+    managed_borders=1
+  fi
 
   header "Stopping services..."
-  stop_services
+  stop_services revert
 
   header "Removing configuration files..."
   rm -f "$AEROSPACE_CFG"
@@ -223,14 +427,21 @@ cmd_revert() {
   rm -f "$WINDOW_STATE_SAVER_PLIST"
   rm -f "$BAR_TOGGLE_PLIST"
   rm -f "$CHROME_REHOME_PLIST"
+  rm -f "$SHORTCUT_WIDGET_PLIST"
   rm -rf "$CHROME_REHOME_APP"
+  rm -rf "$SHORTCUT_WIDGET_APP"
   success "Config files removed"
 
   header "Restoring backups..."
   restore_backups
 
   header "Uninstalling packages..."
-  brew_uninstall "borders"   "FelixKratz/formulae/borders"
+  if [[ "$managed_borders" -eq 1 ]]; then
+    brew_uninstall "borders" "FelixKratz/formulae/borders"
+    rm -f "$BORDERS_INSTALLED_MARKER"
+  else
+    info "borders optional and unmanaged, skipping uninstall"
+  fi
   brew_uninstall "sketchybar" "FelixKratz/formulae/sketchybar"
   brew_uninstall "skhd"       "koekeishiya/formulae/skhd"
   brew_uninstall "aerospace"  "nikitabobko/tap/aerospace"
@@ -252,16 +463,23 @@ cmd_status() {
   check_tool "aerospace"    "$(brew list nikitabobko/tap/aerospace &>/dev/null && echo yes || echo no)"
   check_tool "skhd"         "$(brew list koekeishiya/formulae/skhd &>/dev/null && echo yes || echo no)"
   check_tool "sketchybar"   "$(brew list FelixKratz/formulae/sketchybar &>/dev/null && echo yes || echo no)"
-  check_tool "jankyborders" "$(brew list FelixKratz/formulae/borders &>/dev/null && echo yes || echo no)"
+  if brew list FelixKratz/formulae/borders &>/dev/null; then
+    check_tool "jankyborders (optional)" "yes"
+  else
+    echo -e "  ${YELLOW}○${RESET} jankyborders optional — disabled"
+  fi
 
   echo ""
   check_aerospace_app
   check_launch_agent "com.koekeishiya.skhd"
   check_service "sketchybar"
-  check_service "borders"
+  if borders_enabled || brew list FelixKratz/formulae/borders &>/dev/null; then
+    check_service "borders"
+  fi
   check_launch_agent "$AEROSPACE_START_LABEL"
   check_launch_agent "$WINDOW_STATE_SAVER_LABEL"
   check_launch_agent "$CHROME_REHOME_LABEL"
+  check_launch_agent "$SHORTCUT_WIDGET_LABEL"
 
   echo ""
   if aerospace list-monitors --format '%{monitor-id}' >/dev/null 2>&1; then
@@ -310,6 +528,10 @@ check_prerequisites() {
   success "Prerequisites OK (macOS $arch, Homebrew $(brew --version | head -1))"
 
   mkdir -p "$BACKUP_DIR"
+}
+
+borders_enabled() {
+  [[ "${OMARCHY_ENABLE_BORDERS:-0}" =~ ^(1|true|yes|on)$ ]]
 }
 
 # =============================================================================
@@ -429,10 +651,14 @@ start_services() {
     brew services start sketchybar 2>/dev/null || \
     warn "Could not auto-start sketchybar"
 
-  info "Starting borders..."
-  brew services start felixkratz/formulae/borders 2>/dev/null || \
-    brew services start borders 2>/dev/null || \
-    warn "Could not auto-start borders"
+  if borders_enabled; then
+    info "Starting borders..."
+    brew services start felixkratz/formulae/borders 2>/dev/null || \
+      brew services start borders 2>/dev/null || \
+      warn "Could not auto-start borders"
+  else
+    info "Skipping optional borders service"
+  fi
 
   info "Disabling bar_toggle daemon..."
   launchctl unload "$BAR_TOGGLE_PLIST" 2>/dev/null || true
@@ -443,10 +669,16 @@ start_services() {
   launchctl load "$CHROME_REHOME_PLIST" 2>/dev/null || \
     warn "Could not load chrome_rehome LaunchAgent"
 
+  info "Starting shortcut desktop widget..."
+  launchctl unload "$SHORTCUT_WIDGET_PLIST" 2>/dev/null || true
+  launchctl load "$SHORTCUT_WIDGET_PLIST" 2>/dev/null || \
+    warn "Could not load shortcut desktop widget LaunchAgent"
+
   success "Services started"
 }
 
 stop_services() {
+  local mode="${1:-normal}"
   if [[ -f "$AEROSPACE_START_PLIST" ]]; then
     launchctl unload "$AEROSPACE_START_PLIST" 2>/dev/null && info "  stopped AeroSpace login starter" || true
   fi
@@ -459,7 +691,14 @@ stop_services() {
   if [[ -f "$CHROME_REHOME_PLIST" ]]; then
     launchctl unload "$CHROME_REHOME_PLIST" 2>/dev/null && info "  stopped chrome_rehome" || true
   fi
-  for svc in borders sketchybar aerospace; do
+  if [[ -f "$SHORTCUT_WIDGET_PLIST" ]]; then
+    launchctl unload "$SHORTCUT_WIDGET_PLIST" 2>/dev/null && info "  stopped shortcut widget" || true
+  fi
+  local services=(sketchybar aerospace)
+  if borders_enabled || [[ "$mode" == "revert" ]]; then
+    services=(borders "${services[@]}")
+  fi
+  for svc in "${services[@]}"; do
     if brew services list | grep -q "^$svc"; then
       brew services stop "$svc" 2>/dev/null && info "  stopped $svc" || true
     fi
@@ -510,8 +749,10 @@ check_window_state() {
   summary=$(/usr/bin/perl -MJSON::PP -0777 -e '
     my $data = eval { decode_json(<>); } || {};
     my $count = ref($data->{windows}) eq "ARRAY" ? scalar(@{$data->{windows}}) : 0;
+    my $topologies = ref($data->{snapshots}) eq "HASH" ? scalar(keys %{$data->{snapshots}}) : 0;
     my $saved = $data->{saved_at} || "unknown time";
     print "$count windows saved at $saved";
+    print " across $topologies topologies" if $topologies;
   ' "$WINDOW_STATE_FILE" 2>/dev/null) || summary="unreadable saved state"
   success "Window state: $summary"
   echo "    $WINDOW_STATE_FILE"
@@ -687,10 +928,17 @@ alt-tab       = 'exec-and-forget ~/.config/aerospace/workspace_back_and_forth.sh
 alt-shift-tab = 'move-workspace-to-monitor --wrap-around next'
 
 # ── Move to next/prev monitor ─────────────────────────────────────────────
-alt-ctrl-shift-h = 'move-node-to-monitor left'
-alt-ctrl-shift-l = 'move-node-to-monitor right'
+alt-ctrl-shift-h = 'exec-and-forget ~/.config/aerospace/move_node_to_monitor_and_save.sh left'
+alt-ctrl-shift-l = 'exec-and-forget ~/.config/aerospace/move_node_to_monitor_and_save.sh right'
 
 # ── App → workspace assignments ───────────────────────────────────────────
+
+[[on-window-detected]]
+run = [
+  'exec-and-forget ~/.config/aerospace/window_state_debounced_save.sh window-detected',
+  'exec-and-forget ~/.config/aerospace/responsive_layout.sh window-detected'
+]
+check-further-callbacks = true
 
 # App-assignment rules default to monitor 0's spaces ("0N"). If a second
 # monitor is attached, move the app to <monitor><N> manually after launch.
@@ -977,6 +1225,106 @@ omarchy_repair_detached_monitor_workspaces() {
 SPACE_STATE_EOF
 
   chmod +x "$AEROSPACE_DIR/omarchy_space_state.sh"
+
+  cat > "$MONITOR_FRAME_SRC" << 'MONITOR_FRAME_SWIFT_EOF'
+import AppKit
+
+guard CommandLine.arguments.count > 1,
+      let target = UInt32(CommandLine.arguments[1]) else {
+    exit(1)
+}
+
+for screen in NSScreen.screens {
+    guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+        continue
+    }
+    if number.uint32Value == target {
+        let frame = screen.visibleFrame
+        print("\(Int(frame.width))|\(Int(frame.height))|\(screen.localizedName)")
+        exit(0)
+    }
+}
+
+exit(1)
+MONITOR_FRAME_SWIFT_EOF
+
+  if command -v swiftc &>/dev/null; then
+    swiftc -O "$MONITOR_FRAME_SRC" -o "$MONITOR_FRAME_BIN" 2>/dev/null || \
+      warn "Could not compile monitor_frame helper; responsive layout will use fallback widths"
+    [[ -x "$MONITOR_FRAME_BIN" ]] && chmod +x "$MONITOR_FRAME_BIN"
+  else
+    warn "swiftc not found — responsive layout will use fallback monitor widths"
+  fi
+
+  cat > "$RESPONSIVE_LAYOUT_HELPER" << 'RESPONSIVE_LAYOUT_EOF'
+#!/usr/bin/env bash
+# Switch crowded narrow workspaces to accordion before split columns become
+# too small to use. Intended for laptop displays and narrow external monitors.
+
+set -euo pipefail
+
+source "$HOME/.config/aerospace/omarchy_space_state.sh"
+
+MIN_TILE_WIDTH="${OMARCHY_LAYOUT_MIN_TILE_WIDTH:-640}"
+MONITOR_FRAME_BIN="${OMARCHY_MONITOR_FRAME_BIN:-$HOME/.config/aerospace/monitor_frame}"
+LAYOUT_GUARD_DELAY="${OMARCHY_LAYOUT_GUARD_DELAY:-0.2}"
+REASON="${1:-event}"
+
+sleep "$LAYOUT_GUARD_DELAY" 2>/dev/null || true
+
+focused_monitor_width() {
+  local row screen_id monitor_name width fallback_width
+  row=$("$OMARCHY_AEROSPACE_BIN" list-monitors --focused --format '%{monitor-appkit-nsscreen-screens-id}|%{monitor-name}' 2>/dev/null | head -n 1) || true
+  screen_id="${row%%|*}"
+  monitor_name="${row#*|}"
+
+  if [[ -x "$MONITOR_FRAME_BIN" && "$screen_id" =~ ^[0-9]+$ ]]; then
+    width=$("$MONITOR_FRAME_BIN" "$screen_id" 2>/dev/null | awk -F'|' 'NR == 1 { print int($1) }') || true
+    if [[ "$width" =~ ^[0-9]+$ ]] && [ "$width" -gt 0 ]; then
+      printf '%s\n' "$width"
+      return 0
+    fi
+  fi
+
+  fallback_width="${OMARCHY_LAYOUT_FALLBACK_WIDTH:-}"
+  if [[ "$fallback_width" =~ ^[0-9]+$ ]] && [ "$fallback_width" -gt 0 ]; then
+    printf '%s\n' "$fallback_width"
+    return 0
+  fi
+
+  if [[ "$monitor_name" =~ [Bb]uilt.?in ]]; then
+    printf '1512\n'
+  else
+    printf '2560\n'
+  fi
+}
+
+workspace=$(omarchy_focused_workspace 2>/dev/null || true)
+[[ -n "$workspace" ]] || exit 0
+
+count=$("$OMARCHY_AEROSPACE_BIN" list-windows --workspace "$workspace" --count 2>/dev/null || true)
+count="$(printf '%s' "$count" | tr -cd '0-9')"
+[[ "$count" =~ ^[0-9]+$ ]] || exit 0
+[ "$count" -gt 1 ] || exit 0
+
+width=$(focused_monitor_width)
+[[ "$width" =~ ^[0-9]+$ ]] || exit 0
+
+usable_width=$((width - 16 - ((count - 1) * 8)))
+[ "$usable_width" -gt 0 ] || usable_width="$width"
+per_window=$((usable_width / count))
+
+if [ "$per_window" -lt "$MIN_TILE_WIDTH" ]; then
+  "$OMARCHY_AEROSPACE_BIN" layout accordion horizontal vertical >/dev/null 2>&1 || true
+fi
+
+printf '[%s] responsive layout checked (%s): workspace=%s windows=%s width=%s per_window=%s threshold=%s\n' \
+  "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$REASON" "$workspace" "$count" "$width" "$per_window" "$MIN_TILE_WIDTH" \
+  >> "${OMARCHY_WINDOW_STATE_LOG:-/tmp/omarchy_window_state.log}" 2>/dev/null || true
+RESPONSIVE_LAYOUT_EOF
+
+  chmod +x "$RESPONSIVE_LAYOUT_HELPER"
+
   cat > "$AEROSPACE_DIR/repair_spaces.sh" << 'REPAIR_SPACES_EOF'
 #!/usr/bin/env bash
 # Move windows from detached monitor-prefixed workspaces back to slot 0.
@@ -1045,6 +1393,10 @@ my $restore_attempts = $ENV{OMARCHY_WINDOW_RESTORE_ATTEMPTS} || 120;
 my $restore_delay = $ENV{OMARCHY_WINDOW_RESTORE_DELAY} || 2;
 my $save_wait_attempts = $ENV{OMARCHY_WINDOW_SAVE_WAIT_ATTEMPTS} || 60;
 my $skip_empty_save = $ENV{OMARCHY_WINDOW_SKIP_EMPTY_SAVE} || 0;
+my $tmp_dir = $ENV{TMPDIR} || "/tmp";
+my $restore_guard = $ENV{OMARCHY_WINDOW_RESTORE_GUARD} || "$tmp_dir/omarchy_window_state_restore_active";
+my $debounced_saver = $ENV{OMARCHY_WINDOW_DEBOUNCED_SAVER} || "$home/.config/aerospace/window_state_debounced_save.sh";
+my $history_limit = $ENV{OMARCHY_WINDOW_STATE_HISTORY_LIMIT} || 5;
 my $sep = "\x1f";
 my $format = join($sep,
     "%{window-id}",
@@ -1118,10 +1470,53 @@ sub wait_for_aerospace {
 }
 
 sub monitor_count {
-    my ($out, $ok) = aerospace_output("list-monitors", "--format", "%{monitor-id}");
-    return 1 unless $ok;
-    my @monitors = grep { /\S/ } split /\n/, $out;
-    return scalar(@monitors) || 1;
+    my ($topology) = @_;
+    return scalar(@{$topology->{monitors} || []}) || 1 if $topology;
+    my $current = current_topology();
+    return scalar(@{$current->{monitors} || []}) || 1;
+}
+
+sub monitor_kind {
+    my ($name) = @_;
+    return ($name || "") =~ /built.?in/i ? "built-in" : "external";
+}
+
+sub current_topology {
+    my ($out, $ok) = aerospace_output("list-monitors", "--format", join($sep, "%{monitor-id}", "%{monitor-name}"));
+    my @rows;
+    if ($ok) {
+        for my $line (split /\n/, $out) {
+            next unless length $line;
+            my ($id, $name) = split /\Q$sep\E/, $line, 2;
+            next unless defined($id) && length($id);
+            $name = decode_utf8($name // "", 1);
+            push @rows, { monitor_id => "$id", monitor_name => $name, kind => monitor_kind($name) };
+        }
+    }
+    if (!@rows) {
+        my ($ids, $ids_ok) = aerospace_output("list-monitors", "--format", "%{monitor-id}");
+        if ($ids_ok) {
+            for my $id (grep { /\S/ } split /\n/, $ids) {
+                push @rows, { monitor_id => "$id", monitor_name => "monitor-$id", kind => "external" };
+            }
+        }
+    }
+
+    my @ordered = ((grep { $_->{kind} eq "built-in" } @rows), (grep { $_->{kind} ne "built-in" } @rows));
+    my @monitors;
+    for my $slot (0..$#ordered) {
+        my %monitor = %{$ordered[$slot]};
+        $monitor{slot} = $slot;
+        push @monitors, \%monitor;
+    }
+    my @parts = map { $_->{slot} . ":" . $_->{kind} . ":" . ($_->{monitor_name} || "") } @monitors;
+    my $key = @parts ? join("||", @parts) : "unknown";
+    return {
+        key => $key,
+        monitors => \@monitors,
+        slot_names => [ map { $_->{monitor_name} || "" } @monitors ],
+        monitor_count => scalar(@monitors) || 1,
+    };
 }
 
 sub current_windows {
@@ -1139,12 +1534,25 @@ sub current_windows {
         push @windows, {
             window_id => 0 + $parts[0],
             workspace => $parts[1] // "",
+            raw_workspace => $parts[1] // "",
             app_name => $parts[2] // "",
             app_bundle_id => $parts[3] // "",
             title => $parts[4] // "",
         };
     }
+    my %identity_seen;
+    for my $idx (0..$#windows) {
+        $windows[$idx]->{snapshot_order} = $idx;
+        my $identity = identity_key($windows[$idx]);
+        $windows[$idx]->{identity_order} = $identity_seen{$identity}++;
+    }
     return @windows;
+}
+
+sub identity_key {
+    my ($window) = @_;
+    my $app = length($window->{app_bundle_id} || "") ? $window->{app_bundle_id} : ($window->{app_name} || "");
+    return join("\x1e", $app, $window->{title} || "");
 }
 
 sub assigned_workspace {
@@ -1166,14 +1574,14 @@ sub assigned_workspace {
     return undef;
 }
 
-sub canonicalize_window_workspaces {
+sub prepare_windows_for_save {
     my (@windows) = @_;
     for my $window (@windows) {
+        $window->{raw_workspace} = $window->{workspace} || "";
         my $assigned = assigned_workspace($window);
-        next unless defined $assigned;
-        if (($window->{workspace} || "") ne $assigned) {
-            log_msg("canonicalized saved workspace for $window->{app_name} / $window->{app_bundle_id} from $window->{workspace} to $assigned");
-            $window->{workspace} = $assigned;
+        $window->{target_workspace} = defined($assigned) ? $assigned : ($window->{raw_workspace} || "");
+        if (defined($assigned) && ($window->{raw_workspace} || "") ne $assigned) {
+            log_msg("recorded rule target for $window->{app_name} / $window->{app_bundle_id}: $window->{raw_workspace} -> $assigned");
         }
     }
     return @windows;
@@ -1193,35 +1601,117 @@ sub read_state {
     return eval { decode_json($json) };
 }
 
+sub write_state {
+    my ($state) = @_;
+    make_path(state_dir());
+    my $json = JSON::PP->new->ascii->pretty->canonical->encode($state);
+    my $tmp = "$state_file.tmp.$$";
+    open my $fh, ">", $tmp or die "Could not write $tmp: $!\n";
+    print {$fh} $json;
+    close $fh or die "Could not close $tmp: $!\n";
+    rename $tmp, $state_file or die "Could not replace $state_file: $!\n";
+}
+
 sub save_state {
+    my ($mode, $reason) = @_;
+    $mode ||= "manual";
+    $reason ||= $mode;
+    if (-e $restore_guard) {
+        say_and_log("Restore is active; skipped window state save ($mode: $reason)");
+        return 0;
+    }
     wait_for_aerospace($save_wait_attempts) or die "AeroSpace is not reachable; cannot save window state\n";
-    my @windows = canonicalize_window_workspaces(current_windows(1));
+    my $topology = current_topology();
+    my @windows = prepare_windows_for_save(current_windows(1));
     if ($skip_empty_save && !@windows && -f $state_file) {
         say_and_log("No windows found; leaving existing window state at $state_file");
         return 0;
     }
-    make_path(state_dir());
+
+    my $existing = read_state();
+    my $snapshots = {};
+    if ($existing && ($existing->{format_version} || 1) == 2 && ref($existing->{snapshots}) eq "HASH") {
+        $snapshots = $existing->{snapshots};
+    }
+
+    my $key = $topology->{key};
+    my $previous = $snapshots->{$key};
+    my @history = ref($previous->{history}) eq "ARRAY" ? @{$previous->{history}} : ();
+    if ($previous && ref($previous->{windows}) eq "ARRAY") {
+        unshift @history, {
+            saved_at => $previous->{saved_at} || "unknown time",
+            windows => $previous->{windows},
+        };
+        splice @history, $history_limit if @history > $history_limit;
+    }
+
+    $snapshots->{$key} = {
+        format_version => 2,
+        saved_at => timestamp(),
+        save_mode => $mode,
+        save_reason => $reason,
+        topology => $topology,
+        windows => \@windows,
+        history => \@history,
+    };
 
     my $state = {
-        format_version => 1,
-        saved_at => timestamp(),
+        format_version => 2,
+        saved_at => $snapshots->{$key}->{saved_at},
+        current_topology_key => $key,
+        topology => $topology,
         windows => \@windows,
+        snapshots => $snapshots,
     };
-    my $json = JSON::PP->new->ascii->pretty->canonical->encode($state);
-    open my $fh, ">", $state_file or die "Could not write $state_file: $!\n";
-    print {$fh} $json;
-    close $fh;
+    write_state($state);
 
-    say_and_log("Saved " . scalar(@windows) . " windows to $state_file");
+    say_and_log("Saved " . scalar(@windows) . " windows for topology $key to $state_file ($mode: $reason)");
 }
 
-sub target_workspace {
+sub target_workspace_v1 {
     my ($workspace, $count) = @_;
     return "" unless defined $workspace && length $workspace;
     if ($workspace =~ /^([0-9])([0-9])$/ && $1 >= $count) {
         return "0$2";
     }
     return $workspace;
+}
+
+sub remap_workspace {
+    my ($workspace, $snapshot_topology, $current_topology) = @_;
+    return "" unless defined $workspace && length $workspace;
+    return "0$workspace" if $workspace =~ /^[0-9]$/;
+    return $workspace unless $workspace =~ /^([0-9])([0-9])$/;
+
+    my ($saved_slot, $key) = ($1, $2);
+    my $current_count = monitor_count($current_topology);
+    my $saved_names = $snapshot_topology->{slot_names} || [];
+    my $current_names = $current_topology->{slot_names} || [];
+    my $saved_name = $saved_names->[$saved_slot] // "";
+    if (length $saved_name) {
+        for my $slot (0..$#$current_names) {
+            return "$slot$key" if ($current_names->[$slot] // "") eq $saved_name;
+        }
+    }
+    return $workspace if $saved_slot < $current_count;
+    return "0$key";
+}
+
+sub target_workspace {
+    my ($saved, $snapshot, $current_topology, $exact_topology) = @_;
+    my $base = assigned_workspace($saved)
+        || $saved->{target_workspace}
+        || $saved->{workspace}
+        || $saved->{raw_workspace}
+        || "";
+    return "" unless length $base;
+    return $base if defined assigned_workspace($saved);
+
+    if (!$snapshot || !ref($snapshot->{topology}) || (($snapshot->{format_version} || 1) < 2 && !ref($snapshot->{topology}))) {
+        return target_workspace_v1($base, monitor_count($current_topology));
+    }
+    return $base if $exact_topology;
+    return remap_workspace($base, $snapshot->{topology}, $current_topology);
 }
 
 sub same {
@@ -1279,7 +1769,77 @@ sub find_match {
     return undef;
 }
 
-sub restore_state {
+sub ordinary_chrome {
+    my ($window) = @_;
+    return 0 unless ($window->{app_bundle_id} || "") eq "com.google.Chrome";
+    return 0 unless ($window->{app_name} || "") =~ /^Google Chrome$/i;
+    return 1;
+}
+
+sub topology_score {
+    my ($snapshot, $current) = @_;
+    return -1 unless $snapshot && ref($snapshot->{topology}) eq "HASH";
+    return 10_000 if ($snapshot->{topology}->{key} || "") eq ($current->{key} || "");
+
+    my $score = 0;
+    my $snapshot_names = $snapshot->{topology}->{slot_names} || [];
+    my $current_names = $current->{slot_names} || [];
+    my %current_name = map { ($_ => 1) } grep { length } @$current_names;
+    for my $idx (0..$#$snapshot_names) {
+        my $name = $snapshot_names->[$idx] // "";
+        next unless length $name;
+        $score += 10 if $current_name{$name};
+        $score += 20 if defined($current_names->[$idx]) && $current_names->[$idx] eq $name;
+    }
+    $score -= abs(($snapshot->{topology}->{monitor_count} || scalar(@$snapshot_names)) - ($current->{monitor_count} || scalar(@$current_names)));
+    return $score;
+}
+
+sub selected_snapshot {
+    my ($state, $current_topology) = @_;
+    if (($state->{format_version} || 1) == 2 && ref($state->{snapshots}) eq "HASH") {
+        my $key = $current_topology->{key};
+        if (ref($state->{snapshots}{$key}) eq "HASH" && ref($state->{snapshots}{$key}{windows}) eq "ARRAY") {
+            my %snapshot = %{$state->{snapshots}{$key}};
+            $snapshot{format_version} = 2;
+            return (\%snapshot, 1, "exact topology");
+        }
+
+        my ($best_key, $best_score);
+        for my $candidate_key (keys %{$state->{snapshots}}) {
+            my $snapshot = $state->{snapshots}{$candidate_key};
+            next unless ref($snapshot) eq "HASH" && ref($snapshot->{windows}) eq "ARRAY";
+            my $score = topology_score($snapshot, $current_topology);
+            next if defined($best_score) && $score <= $best_score;
+            ($best_key, $best_score) = ($candidate_key, $score);
+        }
+        if (defined $best_key) {
+            my %snapshot = %{$state->{snapshots}{$best_key}};
+            $snapshot{format_version} = 2;
+            return (\%snapshot, 0, "fallback topology $best_key");
+        }
+    }
+
+    if (ref($state->{windows}) eq "ARRAY") {
+        return ({
+            format_version => 1,
+            saved_at => $state->{saved_at},
+            windows => $state->{windows},
+        }, 1, "v1/top-level state");
+    }
+
+    return (undef, 0, "no usable snapshot");
+}
+
+sub schedule_post_restore_save {
+    return unless -x $debounced_saver;
+    my $pid = fork();
+    return unless defined $pid && $pid == 0;
+    exec($debounced_saver, "post-restore");
+    exit 0;
+}
+
+sub restore_state_inner {
     unless (-f $state_file) {
         say_and_log("No saved window state at $state_file; skipping exact restore");
         return 0;
@@ -1287,9 +1847,13 @@ sub restore_state {
     wait_for_aerospace(60) or die "AeroSpace is not reachable; cannot restore window state\n";
 
     my $state = read_state();
-    die "Could not parse $state_file\n" unless $state && ref($state->{windows}) eq "ARRAY";
+    die "Could not parse $state_file\n" unless $state;
 
-    my @saved = @{$state->{windows}};
+    my $current_topology = current_topology();
+    my ($snapshot, $exact_topology, $selection_reason) = selected_snapshot($state, $current_topology);
+    die "No usable window snapshot in $state_file\n" unless $snapshot && ref($snapshot->{windows}) eq "ARRAY";
+
+    my @saved = @{$snapshot->{windows}};
     if (!@saved) {
         say_and_log("Saved window state is empty; nothing to restore");
         return 0;
@@ -1297,25 +1861,23 @@ sub restore_state {
 
     my %done;
     my %reported;
-    my $count = monitor_count();
     my $total = scalar(@saved);
+    log_msg("restoring $selection_reason with " . $total . " saved windows");
 
     for my $attempt (1..$restore_attempts) {
         my @current = current_windows();
         my %used;
-        my $matched_this_round = 0;
 
         for my $idx (0..$#saved) {
             next if $done{$idx};
             my $saved = $saved[$idx];
-            my $target = target_workspace(assigned_workspace($saved) || $saved->{workspace}, $count);
+            my $target = target_workspace($saved, $snapshot, $current_topology, $exact_topology);
             next unless length $target;
 
             my $match = find_match($saved, \@current, \%used);
             next unless $match;
 
             $used{$match->{window_id}} = 1;
-            $matched_this_round++;
 
             if ($match->{workspace} eq $target) {
                 log_msg("window $match->{window_id} already on $target: $saved->{app_name} / $saved->{title}") unless $reported{$idx}++;
@@ -1328,6 +1890,34 @@ sub restore_state {
                 $done{$idx} = 1;
             } else {
                 log_msg("failed moving window $match->{window_id} to $target: $saved->{app_name} / $saved->{title}");
+            }
+        }
+
+        my @saved_chrome_idx = sort {
+            (($saved[$a]->{snapshot_order} // $a) <=> ($saved[$b]->{snapshot_order} // $b))
+            || (($saved[$a]->{identity_order} // 0) <=> ($saved[$b]->{identity_order} // 0))
+        } grep { !$done{$_} && ordinary_chrome($saved[$_]) } 0..$#saved;
+        my @current_chrome = sort {
+            (($a->{snapshot_order} // 0) <=> ($b->{snapshot_order} // 0))
+            || (($a->{window_id} // 0) <=> ($b->{window_id} // 0))
+        } grep { !$used{$_->{window_id}} && ordinary_chrome($_) } @current;
+
+        my $pairs = @saved_chrome_idx < @current_chrome ? scalar(@saved_chrome_idx) : scalar(@current_chrome);
+        for my $i (0..$pairs - 1) {
+            my $idx = $saved_chrome_idx[$i];
+            my $saved = $saved[$idx];
+            my $match = $current_chrome[$i];
+            my $target = target_workspace($saved, $snapshot, $current_topology, $exact_topology);
+            next unless length $target;
+            $used{$match->{window_id}} = 1;
+            if ($match->{workspace} eq $target) {
+                log_msg("Chrome fallback window $match->{window_id} already on $target") unless $reported{$idx}++;
+                $done{$idx} = 1;
+            } elsif (aerospace_ok("move-node-to-workspace", "--window-id", "$match->{window_id}", "$target")) {
+                log_msg("Chrome fallback moved window $match->{window_id} from $match->{workspace} to $target");
+                $done{$idx} = 1;
+            } else {
+                log_msg("Chrome fallback failed moving window $match->{window_id} to $target");
             }
         }
 
@@ -1345,11 +1935,25 @@ sub restore_state {
     for my $idx (0..$#saved) {
         next if $done{$idx};
         my $saved = $saved[$idx];
-        my $target = target_workspace(assigned_workspace($saved) || $saved->{workspace}, $count);
+        my $target = target_workspace($saved, $snapshot, $current_topology, $exact_topology);
         log_msg("unmatched saved window for $target: $saved->{app_name} / $saved->{app_bundle_id} / $saved->{title}");
         $unmatched++;
     }
     say_and_log("Window restore finished with $unmatched unmatched saved windows; see $log_file");
+    return 0;
+}
+
+sub restore_state {
+    make_path(state_dir());
+    if (open my $fh, ">", $restore_guard) {
+        print {$fh} timestamp() . "\n";
+        close $fh;
+    }
+    my $ok = eval { restore_state_inner(); 1 };
+    my $err = $@;
+    unlink $restore_guard;
+    die $err unless $ok;
+    schedule_post_restore_save();
     return 0;
 }
 
@@ -1359,17 +1963,23 @@ sub status_state {
         return 0;
     }
     my $state = read_state();
-    unless ($state && ref($state->{windows}) eq "ARRAY") {
+    unless ($state) {
         print "Saved window state is unreadable at $state_file\n";
         return 1;
     }
-    print scalar(@{$state->{windows}}) . " windows saved at " . ($state->{saved_at} || "unknown time") . "\n";
+    my $count = ref($state->{windows}) eq "ARRAY" ? scalar(@{$state->{windows}}) : 0;
+    my $snapshot_count = ref($state->{snapshots}) eq "HASH" ? scalar(keys %{$state->{snapshots}}) : 0;
+    print "$count windows saved at " . ($state->{saved_at} || "unknown time");
+    print " across $snapshot_count topologies" if $snapshot_count;
+    print "\n";
     print "$state_file\n";
 }
 
 my $command = shift(@ARGV) || "status";
 if ($command eq "save") {
-    save_state();
+    my $mode = shift(@ARGV) || "manual";
+    my $reason = shift(@ARGV) || $mode;
+    save_state($mode, $reason);
 } elsif ($command eq "restore") {
     restore_state();
 } elsif ($command eq "status") {
@@ -1388,6 +1998,79 @@ exec /usr/bin/perl "$HOME/.config/aerospace/window_state.pl" "$@"
 WINDOW_STATE_WRAPPER_EOF
 
   chmod +x "$WINDOW_STATE_WRAPPER"
+  cat > "$WINDOW_STATE_DEBOUNCED_SAVER" << 'WINDOW_STATE_DEBOUNCED_SAVER_EOF'
+#!/usr/bin/env bash
+set -u
+
+HELPER="$HOME/.config/aerospace/window_state.sh"
+LOG_FILE="${OMARCHY_WINDOW_STATE_LOG:-/tmp/omarchy_window_state.log}"
+DELAY="${OMARCHY_WINDOW_STATE_DEBOUNCE_SECONDS:-2}"
+SAVE_WAIT_ATTEMPTS="${OMARCHY_WINDOW_SAVE_WAIT_ATTEMPTS:-5}"
+TMP_ROOT="${TMPDIR:-/tmp}"
+LOCK_DIR="$TMP_ROOT/omarchy_window_state_debounced.lock"
+PENDING_FILE="$TMP_ROOT/omarchy_window_state_debounced.pending"
+RESTORE_GUARD="${OMARCHY_WINDOW_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_restore_active}"
+REASON="${1:-event}"
+
+log_msg() {
+  printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >> "$LOG_FILE"
+}
+
+if [[ -e "$RESTORE_GUARD" ]]; then
+  log_msg "restore active; skipped debounced save request ($REASON)"
+  exit 0
+fi
+
+printf '%s\n' "$REASON" > "$PENDING_FILE" 2>/dev/null || true
+
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  exit 0
+fi
+
+cleanup() {
+  rm -rf "$LOCK_DIR"
+}
+trap cleanup EXIT TERM INT HUP
+
+while true; do
+  sleep "$DELAY"
+  if [[ -e "$RESTORE_GUARD" ]]; then
+    log_msg "restore active; skipped debounced save"
+    rm -f "$PENDING_FILE"
+    exit 0
+  fi
+
+  reason="$(cat "$PENDING_FILE" 2>/dev/null || printf '%s\n' "$REASON")"
+  rm -f "$PENDING_FILE"
+  if [[ ! -x "$HELPER" ]]; then
+    log_msg "window state helper missing at $HELPER"
+    exit 0
+  fi
+
+  log_msg "debounced save starting ($reason)"
+  OMARCHY_WINDOW_SAVE_WAIT_ATTEMPTS="$SAVE_WAIT_ATTEMPTS" \
+    OMARCHY_WINDOW_SKIP_EMPTY_SAVE=1 \
+    "$HELPER" save auto "$reason" >> "$LOG_FILE" 2>&1 || \
+    log_msg "debounced save failed ($reason)"
+
+  [[ -f "$PENDING_FILE" ]] || break
+done
+WINDOW_STATE_DEBOUNCED_SAVER_EOF
+
+  chmod +x "$WINDOW_STATE_DEBOUNCED_SAVER"
+
+  cat > "$WINDOW_STATE_MONITOR_MOVE_HELPER" << 'WINDOW_STATE_MONITOR_MOVE_HELPER_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+DIRECTION="${1:?usage: move_node_to_monitor_and_save.sh left|right|up|down|next|prev}"
+
+aerospace move-node-to-monitor "$DIRECTION"
+"$HOME/.config/aerospace/window_state_debounced_save.sh" "move-node-to-monitor-$DIRECTION" >/dev/null 2>&1 || true
+"$HOME/.config/aerospace/responsive_layout.sh" "move-node-to-monitor-$DIRECTION" >/dev/null 2>&1 || true
+WINDOW_STATE_MONITOR_MOVE_HELPER_EOF
+
+  chmod +x "$WINDOW_STATE_MONITOR_MOVE_HELPER"
   success "window state helper written to $WINDOW_STATE_WRAPPER"
 }
 
@@ -1409,6 +2092,7 @@ HELPER="$WINDOW_STATE_WRAPPER"
 LOG_FILE="$WINDOW_STATE_LOG"
 INTERVAL="\${OMARCHY_WINDOW_STATE_SAVE_INTERVAL:-$WINDOW_STATE_SAVE_INTERVAL_SECONDS}"
 SAVE_WAIT_ATTEMPTS="\${OMARCHY_WINDOW_SAVE_WAIT_ATTEMPTS:-5}"
+RESTORE_GUARD="\${OMARCHY_WINDOW_RESTORE_GUARD:-\${TMPDIR:-/tmp}/omarchy_window_state_restore_active}"
 sleep_pid=""
 
 log_msg() {
@@ -1421,11 +2105,15 @@ save_now() {
     log_msg "window state helper missing at \$HELPER"
     return 0
   fi
+  if [[ -e "\$RESTORE_GUARD" ]]; then
+    log_msg "restore active; skipped window state save (\$reason)"
+    return 0
+  fi
 
   log_msg "saving window state (\$reason)"
   OMARCHY_WINDOW_SAVE_WAIT_ATTEMPTS="\$SAVE_WAIT_ATTEMPTS" \
     OMARCHY_WINDOW_SKIP_EMPTY_SAVE=1 \
-    "\$HELPER" save >> "\$LOG_FILE" 2>&1 || \
+    "\$HELPER" save auto "\$reason" >> "\$LOG_FILE" 2>&1 || \
     log_msg "window state save failed (\$reason)"
 }
 
@@ -1528,9 +2216,12 @@ omarchy_repair_detached_monitor_workspaces || true
 case "$ACTION" in
   --move)
     aerospace move-node-to-workspace "$TARGET"
+    "$HOME/.config/aerospace/window_state_debounced_save.sh" "move-node-to-workspace-$TARGET" >/dev/null 2>&1 || true
+    "$HOME/.config/aerospace/responsive_layout.sh" "move-node-to-workspace-$TARGET" >/dev/null 2>&1 || true
     ;;
   focus|*)
     omarchy_switch_workspace_on_slot_monitor "$TARGET"
+    "$HOME/.config/aerospace/responsive_layout.sh" "workspace-$TARGET" >/dev/null 2>&1 || true
     "$HOME/.config/sketchybar/plugins/hide_bar.sh" >/dev/null 2>&1 || true
     ;;
 esac
@@ -1542,6 +2233,7 @@ GOTO_SPACE_EOF
 set -euo pipefail
 
 aerospace workspace-back-and-forth
+"$HOME/.config/aerospace/responsive_layout.sh" "workspace-back-and-forth" >/dev/null 2>&1 || true
 "$HOME/.config/sketchybar/plugins/hide_bar.sh" >/dev/null 2>&1 || true
 WORKSPACE_BACK_AND_FORTH_EOF
 
@@ -2154,123 +2846,6 @@ WIFI_PLUGIN_EOF
 }
 
 # =============================================================================
-# BAR TOGGLE DAEMON
-#
-# Tiny Swift binary that polls the Option modifier and shows the SketchyBar
-# while Option is held. On each show it fires `front_app_switched` so the
-# space highlight is repainted fresh (workaround for sketchybar's background
-# redraw quirk when --set runs against a hidden bar). Loaded as a LaunchAgent.
-# =============================================================================
-write_bar_toggle_daemon() {
-  info "Writing bar_toggle daemon..."
-  mkdir -p "$SKETCHY_DIR/plugins"
-
-  cat > "$BAR_TOGGLE_SRC" << 'BAR_TOGGLE_SWIFT_EOF'
-import Foundation
-import CoreGraphics
-
-let showDelay: TimeInterval = 0.15
-let pollInterval: TimeInterval = 0.05
-let hideRetryInterval: TimeInterval = 1.0
-let sketchybarPath = "/opt/homebrew/bin/sketchybar"
-
-@discardableResult
-func sb(_ args: String...) -> Bool {
-    let p = Process()
-    p.launchPath = sketchybarPath
-    p.arguments = args
-    p.standardOutput = FileHandle.nullDevice
-    p.standardError = FileHandle.nullDevice
-    do {
-        try p.run()
-    } catch {
-        return false
-    }
-    p.waitUntilExit()
-    return p.terminationStatus == 0
-}
-
-func optionPressed() -> Bool {
-    let flags = CGEventSource.flagsState(.combinedSessionState)
-    return flags.rawValue & CGEventFlags.maskAlternate.rawValue != 0
-}
-
-var visible = false
-var holdStart: Date? = nil
-var lastHideAttempt = Date.distantPast
-
-func hideBar(force: Bool = false) {
-    let now = Date()
-    guard force || now.timeIntervalSince(lastHideAttempt) >= hideRetryInterval else {
-        return
-    }
-    lastHideAttempt = now
-    if sb("--bar", "hidden=on", "topmost=window") {
-        visible = false
-    }
-}
-
-hideBar(force: true)
-
-while true {
-    let pressed = optionPressed()
-    if pressed && !visible {
-        if holdStart == nil {
-            holdStart = Date()
-        } else if Date().timeIntervalSince(holdStart!) >= showDelay {
-            sb("--bar", "hidden=off")
-            sb("--trigger", "front_app_switched")
-            visible = true
-        }
-    } else if !pressed {
-        holdStart = nil
-        if visible {
-            hideBar(force: true)
-        } else {
-            hideBar()
-        }
-    }
-    Thread.sleep(forTimeInterval: pollInterval)
-}
-BAR_TOGGLE_SWIFT_EOF
-
-  if ! command -v swiftc &>/dev/null; then
-    warn "swiftc not found — install Xcode Command Line Tools (xcode-select --install)"
-    return 1
-  fi
-
-  info "Compiling bar_toggle..."
-  swiftc -O "$BAR_TOGGLE_SRC" -o "$BAR_TOGGLE_BIN"
-  chmod +x "$BAR_TOGGLE_BIN"
-
-  mkdir -p "$HOME/Library/LaunchAgents"
-  cat > "$BAR_TOGGLE_PLIST" << BAR_TOGGLE_PLIST_EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>$BAR_TOGGLE_LABEL</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>$BAR_TOGGLE_BIN</string>
-  </array>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>/tmp/bar_toggle.log</string>
-  <key>StandardErrorPath</key>
-  <string>/tmp/bar_toggle.log</string>
-</dict>
-</plist>
-BAR_TOGGLE_PLIST_EOF
-
-  success "bar_toggle daemon written"
-}
-
-# =============================================================================
 # CHROME REHOME DAEMON
 #
 # Swift binary that subscribes to Chrome's AXWindowCreated events and moves
@@ -2294,6 +2869,7 @@ import ApplicationServices
 func _AXUIElementGetWindow(_ element: AXUIElement, _ windowId: UnsafeMutablePointer<CGWindowID>) -> AXError
 
 let aerospacePath = "/opt/homebrew/bin/aerospace"
+let debouncedSavePath = NSHomeDirectory() + "/.config/aerospace/window_state_debounced_save.sh"
 let chromeBundleID = "com.google.Chrome"
 let scanOrder: [String] = ["1","2","3","4","5","6","7","8","9","0"]
 let aerospaceStartupAttempts = 60
@@ -2324,6 +2900,18 @@ func aerospaceAvailable() -> Bool {
     !sh(["list-monitors", "--format", "%{monitor-id}"])
         .trimmingCharacters(in: .whitespacesAndNewlines)
         .isEmpty
+}
+
+func scheduleWindowStateSave(_ reason: String) {
+    guard FileManager.default.isExecutableFile(atPath: debouncedSavePath) else { return }
+    let p = Process()
+    p.launchPath = debouncedSavePath
+    p.arguments = [reason]
+    do {
+        try p.run()
+    } catch {
+        log("could not schedule window state save: \(error)")
+    }
 }
 
 func waitForAerospace() -> Bool {
@@ -2383,6 +2971,7 @@ func handleNewWindow(_ wid: CGWindowID) {
         }
         if siblingChromeOnWs {
             log("Chrome window \(wid) on \(ws): already has Chrome here, leaving in place")
+            scheduleWindowStateSave("chrome-window-detected")
             return
         }
         guard let monitor = ws.first else { return }
@@ -2396,6 +2985,7 @@ func handleNewWindow(_ wid: CGWindowID) {
         } else {
             log("Chrome window \(wid) alone on \(ws): monitor \(targetMonitor) full, leaving in place")
         }
+        scheduleWindowStateSave("chrome-window-detected")
         return
     }
     log("Chrome window \(wid) never appeared in aerospace listing")
@@ -2573,6 +3163,14 @@ CHROME_REHOME_PLIST_EOF
 # =============================================================================
 # JANKYBORDERS CONFIG
 # =============================================================================
+write_borders_config_if_enabled() {
+  if borders_enabled; then
+    write_borders_config
+  else
+    info "Skipping optional JankyBorders config"
+  fi
+}
+
 write_borders_config() {
   info "Writing JankyBorders config..."
   mkdir -p "$BORDERS_DIR"
@@ -2607,7 +3205,8 @@ usage() {
   echo ""
   echo -e "${BOLD}omarchy-macos${RESET} — Hyprland-style window management for macOS M1"
   echo ""
-  echo "  ./install.sh install   install and configure all tools"
+  echo "  ./install.sh install   install and configure core tools"
+  echo "                         set OMARCHY_ENABLE_BORDERS=1 to include JankyBorders"
   echo "  ./install.sh refresh   rewrite generated configs without reinstalling packages"
   echo "  ./install.sh repair-spaces"
   echo "                         move windows off detached monitor workspaces"
@@ -2615,6 +3214,8 @@ usage() {
   echo "                         save current window/workspace layout for reboot restore"
   echo "  ./install.sh restore-window-state"
   echo "                         restore the saved window/workspace layout now"
+  echo "  ./install.sh shortcuts-widget"
+  echo "                         regenerate the desktop shortcut image"
   echo "  ./install.sh revert    undo everything, restore previous state"
   echo "  ./install.sh status    show install and service status"
   echo ""
@@ -2626,6 +3227,7 @@ case "${1:-}" in
   repair-spaces) cmd_repair_spaces ;;
   save-window-state) cmd_save_window_state ;;
   restore-window-state) cmd_restore_window_state ;;
+  shortcuts-widget) cmd_shortcuts_widget ;;
   revert)        cmd_revert        ;;
   status)        cmd_status        ;;
   *)             usage; exit 1     ;;

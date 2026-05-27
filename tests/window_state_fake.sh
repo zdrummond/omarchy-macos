@@ -1,0 +1,278 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/omarchy-window-state-test.XXXXXX")"
+trap 'rm -rf "$TMP_ROOT"' EXIT
+
+HELPER="$TMP_ROOT/window_state.pl"
+FAKE_AEROSPACE="$TMP_ROOT/aerospace"
+STATE_FILE="$TMP_ROOT/state.json"
+LOG_FILE="$TMP_ROOT/window_state.log"
+MONITORS_FILE="$TMP_ROOT/monitors.txt"
+WINDOWS_FILE="$TMP_ROOT/windows.txt"
+MOVES_FILE="$TMP_ROOT/moves.txt"
+GUARD_FILE="$TMP_ROOT/restore-active"
+
+awk '/^#!\/usr\/bin\/env perl$/{in_block=1} in_block{print} /^WINDOW_STATE_PERL_EOF$/{exit}' "$ROOT/install.sh" | sed '$d' > "$HELPER"
+chmod +x "$HELPER"
+
+cat > "$FAKE_AEROSPACE" <<'FAKE_AEROSPACE_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+cmd="${1:-}"
+shift || true
+
+format_rows() {
+  local file="$1"
+  local format="$2"
+  local line id workspace app bundle title name out
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    if [[ "$file" == "$OMARCHY_FAKE_MONITORS" ]]; then
+      IFS='|' read -r id name <<< "$line"
+      out="$format"
+      out="${out//%\{monitor-id\}/$id}"
+      out="${out//%\{monitor-name\}/$name}"
+    else
+      IFS='|' read -r id workspace app bundle title <<< "$line"
+      out="$format"
+      out="${out//%\{window-id\}/$id}"
+      out="${out//%\{workspace\}/$workspace}"
+      out="${out//%\{app-name\}/$app}"
+      out="${out//%\{app-bundle-id\}/$bundle}"
+      out="${out//%\{window-title\}/$title}"
+    fi
+    printf '%s\n' "$out"
+  done < "$file"
+}
+
+case "$cmd" in
+  list-monitors)
+    format="%{monitor-id}"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --format) format="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    format_rows "$OMARCHY_FAKE_MONITORS" "$format"
+    ;;
+  list-windows)
+    workspace_filter=""
+    format="%{window-id}"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --all) shift ;;
+        --workspace) workspace_filter="$2"; shift 2 ;;
+        --format) format="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    if [[ -n "$workspace_filter" ]]; then
+      awk -F'|' -v ws="$workspace_filter" '$2 == ws' "$OMARCHY_FAKE_WINDOWS" > "$OMARCHY_FAKE_WINDOWS.filtered"
+      format_rows "$OMARCHY_FAKE_WINDOWS.filtered" "$format"
+      rm -f "$OMARCHY_FAKE_WINDOWS.filtered"
+    else
+      format_rows "$OMARCHY_FAKE_WINDOWS" "$format"
+    fi
+    ;;
+  move-node-to-workspace)
+    window_id=""
+    if [[ "${1:-}" == "--window-id" ]]; then
+      window_id="$2"
+      shift 2
+    fi
+    target="${1:?missing target workspace}"
+    printf '%s|%s\n' "$window_id" "$target" >> "$OMARCHY_FAKE_MOVES"
+    ;;
+  workspace)
+    ;;
+  *)
+    printf 'unexpected fake aerospace command: %s\n' "$cmd" >&2
+    exit 1
+    ;;
+esac
+FAKE_AEROSPACE_EOF
+chmod +x "$FAKE_AEROSPACE"
+
+export OMARCHY_AEROSPACE_BIN="$FAKE_AEROSPACE"
+export OMARCHY_WINDOW_STATE_FILE="$STATE_FILE"
+export OMARCHY_WINDOW_STATE_LOG="$LOG_FILE"
+export OMARCHY_WINDOW_RESTORE_ATTEMPTS=1
+export OMARCHY_WINDOW_RESTORE_DELAY=0
+export OMARCHY_WINDOW_SAVE_WAIT_ATTEMPTS=1
+export OMARCHY_WINDOW_RESTORE_GUARD="$GUARD_FILE"
+export OMARCHY_WINDOW_DEBOUNCED_SAVER="$TMP_ROOT/missing-debounced-save"
+export OMARCHY_FAKE_MONITORS="$MONITORS_FILE"
+export OMARCHY_FAKE_WINDOWS="$WINDOWS_FILE"
+export OMARCHY_FAKE_MOVES="$MOVES_FILE"
+
+write_monitors() {
+  : > "$MONITORS_FILE"
+  printf '%s\n' "$@" > "$MONITORS_FILE"
+}
+
+write_windows() {
+  : > "$WINDOWS_FILE"
+  printf '%s\n' "$@" > "$WINDOWS_FILE"
+  : > "$MOVES_FILE"
+}
+
+assert_moves() {
+  local expected="$1"
+  local actual
+  actual="$(cat "$MOVES_FILE" 2>/dev/null || true)"
+  if [[ "$actual" != "$expected" ]]; then
+    printf 'expected moves:\n%s\nactual moves:\n%s\n' "$expected" "$actual" >&2
+    exit 1
+  fi
+}
+
+run_restore() {
+  /usr/bin/perl "$HELPER" restore >/dev/null
+}
+
+run_save() {
+  /usr/bin/perl "$HELPER" save "$@" >/dev/null
+}
+
+write_monitors "1|Built-in Display"
+write_windows "101|01|Notes|com.apple.Notes|Scratch"
+cat > "$STATE_FILE" <<'JSON'
+{
+  "format_version": 1,
+  "saved_at": "old",
+  "windows": [
+    {"window_id":101,"workspace":"17","app_name":"Notes","app_bundle_id":"com.apple.Notes","title":"Scratch"}
+  ]
+}
+JSON
+run_restore
+assert_moves "101|07"
+
+write_monitors "1|Built-in Display" "2|DELL U2723QE"
+write_windows "201|01|Safari|com.apple.Safari|Docs"
+cat > "$STATE_FILE" <<'JSON'
+{
+  "format_version": 2,
+  "saved_at": "new",
+  "current_topology_key": "0:built-in:Built-in Display||1:external:DELL U2723QE",
+  "windows": [],
+  "snapshots": {
+    "0:built-in:Built-in Display": {
+      "format_version": 2,
+      "saved_at": "wrong",
+      "topology": {"key":"0:built-in:Built-in Display","monitor_count":1,"slot_names":["Built-in Display"],"monitors":[]},
+      "windows": [{"window_id":201,"target_workspace":"04","app_name":"Safari","app_bundle_id":"com.apple.Safari","title":"Docs"}]
+    },
+    "0:built-in:Built-in Display||1:external:DELL U2723QE": {
+      "format_version": 2,
+      "saved_at": "right",
+      "topology": {"key":"0:built-in:Built-in Display||1:external:DELL U2723QE","monitor_count":2,"slot_names":["Built-in Display","DELL U2723QE"],"monitors":[]},
+      "windows": [{"window_id":201,"target_workspace":"17","app_name":"Safari","app_bundle_id":"com.apple.Safari","title":"Docs"}]
+    }
+  }
+}
+JSON
+run_restore
+assert_moves "201|17"
+
+write_monitors "1|Built-in Display"
+write_windows "301|01|Safari|com.apple.Safari|Docs"
+cat > "$STATE_FILE" <<'JSON'
+{
+  "format_version": 2,
+  "saved_at": "new",
+  "windows": [],
+  "snapshots": {
+    "0:built-in:Built-in Display||1:external:DELL U2723QE": {
+      "format_version": 2,
+      "saved_at": "right",
+      "topology": {"key":"0:built-in:Built-in Display||1:external:DELL U2723QE","monitor_count":2,"slot_names":["Built-in Display","DELL U2723QE"],"monitors":[]},
+      "windows": [{"window_id":301,"target_workspace":"17","app_name":"Safari","app_bundle_id":"com.apple.Safari","title":"Docs"}]
+    }
+  }
+}
+JSON
+run_restore
+assert_moves "301|07"
+
+write_monitors "1|Built-in Display"
+write_windows "401|09|Messages|com.apple.MobileSMS|Chat"
+cat > "$STATE_FILE" <<'JSON'
+{
+  "format_version": 2,
+  "saved_at": "new",
+  "windows": [],
+  "snapshots": {
+    "0:built-in:Built-in Display": {
+      "format_version": 2,
+      "saved_at": "right",
+      "topology": {"key":"0:built-in:Built-in Display","monitor_count":1,"slot_names":["Built-in Display"],"monitors":[]},
+      "windows": [{"window_id":401,"target_workspace":"09","app_name":"Messages","app_bundle_id":"com.apple.MobileSMS","title":"Chat"}]
+    }
+  }
+}
+JSON
+run_restore
+assert_moves "401|02"
+
+write_monitors "1|Built-in Display" "2|DELL U2723QE"
+write_windows \
+  "501|01|Google Chrome|com.google.Chrome|New title 1" \
+  "502|01|Google Chrome|com.google.Chrome|New title 2"
+cat > "$STATE_FILE" <<'JSON'
+{
+  "format_version": 2,
+  "saved_at": "new",
+  "windows": [],
+  "snapshots": {
+    "0:built-in:Built-in Display||1:external:DELL U2723QE": {
+      "format_version": 2,
+      "saved_at": "right",
+      "topology": {"key":"0:built-in:Built-in Display||1:external:DELL U2723QE","monitor_count":2,"slot_names":["Built-in Display","DELL U2723QE"],"monitors":[]},
+      "windows": [
+        {"window_id":9001,"target_workspace":"11","app_name":"Google Chrome","app_bundle_id":"com.google.Chrome","title":"Old title A","snapshot_order":0,"identity_order":0},
+        {"window_id":9002,"target_workspace":"12","app_name":"Google Chrome","app_bundle_id":"com.google.Chrome","title":"Old title B","snapshot_order":1,"identity_order":0}
+      ]
+    }
+  }
+}
+JSON
+run_restore
+assert_moves $'501|11\n502|12'
+
+write_monitors "1|Built-in Display"
+write_windows "601|06|Zed|dev.zed.Zed|Project"
+cat > "$STATE_FILE" <<'JSON'
+{
+  "format_version": 2,
+  "saved_at": "existing",
+  "windows": [],
+  "snapshots": {
+    "0:built-in:Built-in Display||1:external:Studio Display": {
+      "format_version": 2,
+      "saved_at": "external",
+      "topology": {"key":"0:built-in:Built-in Display||1:external:Studio Display","monitor_count":2,"slot_names":["Built-in Display","Studio Display"],"monitors":[]},
+      "windows": [{"window_id":1,"target_workspace":"15","app_name":"Safari","app_bundle_id":"com.apple.Safari","title":"External"}]
+    }
+  }
+}
+JSON
+run_save auto event
+/usr/bin/perl -MJSON::PP -0777 -e '
+  my $s = decode_json(<>);
+  die "missing current topology\n" unless $s->{snapshots}{"0:built-in:Built-in Display"};
+  die "overwrote other topology\n" unless $s->{snapshots}{"0:built-in:Built-in Display||1:external:Studio Display"};
+  die "expected two topologies\n" unless scalar(keys %{$s->{snapshots}}) == 2;
+' "$STATE_FILE"
+
+cp "$STATE_FILE" "$STATE_FILE.before"
+touch "$GUARD_FILE"
+run_save auto guarded
+rm -f "$GUARD_FILE"
+cmp -s "$STATE_FILE.before" "$STATE_FILE"
+
+printf 'window_state_fake.sh: all checks passed\n'
