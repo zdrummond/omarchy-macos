@@ -986,6 +986,10 @@ run = ['move-node-to-workspace 06', 'workspace 06']
 if.app-name-regex-substring = 'Steam'
 run = ['move-node-to-workspace 00', 'workspace 00']
 
+# Windows without an explicit app rule start on monitor 0's fallback workspace.
+[[on-window-detected]]
+run = ['move-node-to-workspace 00', 'workspace 00']
+
 # [[on-window-detected]]
 # if.app-name-regex-substring = 'slack|discord'
 # run = 'move-node-to-workspace 8'
@@ -1359,6 +1363,17 @@ REPAIR_SPACES_EOF
 
 set -euo pipefail
 
+TMP_ROOT="${TMPDIR:-/tmp}"
+STARTUP_RESTORE_GUARD="${OMARCHY_WINDOW_STARTUP_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_startup_restore_active}"
+DEBOUNCED_SAVER="$HOME/.config/aerospace/window_state_debounced_save.sh"
+
+cleanup() {
+  rm -f "$STARTUP_RESTORE_GUARD"
+  "$DEBOUNCED_SAVER" "post-startup-restore" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+printf '%s\n' "$$" > "$STARTUP_RESTORE_GUARD"
 "$HOME/.config/aerospace/repair_spaces.sh" || true
 "$HOME/.config/aerospace/window_state.sh" restore || true
 "$HOME/.config/aerospace/repair_spaces.sh" || true
@@ -1395,6 +1410,7 @@ my $save_wait_attempts = $ENV{OMARCHY_WINDOW_SAVE_WAIT_ATTEMPTS} || 60;
 my $skip_empty_save = $ENV{OMARCHY_WINDOW_SKIP_EMPTY_SAVE} || 0;
 my $tmp_dir = $ENV{TMPDIR} || "/tmp";
 my $restore_guard = $ENV{OMARCHY_WINDOW_RESTORE_GUARD} || "$tmp_dir/omarchy_window_state_restore_active";
+my $startup_restore_guard = $ENV{OMARCHY_WINDOW_STARTUP_RESTORE_GUARD} || "$tmp_dir/omarchy_window_state_startup_restore_active";
 my $debounced_saver = $ENV{OMARCHY_WINDOW_DEBOUNCED_SAVER} || "$home/.config/aerospace/window_state_debounced_save.sh";
 my $history_limit = $ENV{OMARCHY_WINDOW_STATE_HISTORY_LIMIT} || 5;
 my $sep = "\x1f";
@@ -1616,7 +1632,7 @@ sub save_state {
     my ($mode, $reason) = @_;
     $mode ||= "manual";
     $reason ||= $mode;
-    if (-e $restore_guard) {
+    if (-e $restore_guard || -e $startup_restore_guard) {
         say_and_log("Restore is active; skipped window state save ($mode: $reason)");
         return 0;
     }
@@ -2010,13 +2026,14 @@ TMP_ROOT="${TMPDIR:-/tmp}"
 LOCK_DIR="$TMP_ROOT/omarchy_window_state_debounced.lock"
 PENDING_FILE="$TMP_ROOT/omarchy_window_state_debounced.pending"
 RESTORE_GUARD="${OMARCHY_WINDOW_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_restore_active}"
+STARTUP_RESTORE_GUARD="${OMARCHY_WINDOW_STARTUP_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_startup_restore_active}"
 REASON="${1:-event}"
 
 log_msg() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >> "$LOG_FILE"
 }
 
-if [[ -e "$RESTORE_GUARD" ]]; then
+if [[ -e "$RESTORE_GUARD" || -e "$STARTUP_RESTORE_GUARD" ]]; then
   log_msg "restore active; skipped debounced save request ($REASON)"
   exit 0
 fi
@@ -2034,7 +2051,7 @@ trap cleanup EXIT TERM INT HUP
 
 while true; do
   sleep "$DELAY"
-  if [[ -e "$RESTORE_GUARD" ]]; then
+  if [[ -e "$RESTORE_GUARD" || -e "$STARTUP_RESTORE_GUARD" ]]; then
     log_msg "restore active; skipped debounced save"
     rm -f "$PENDING_FILE"
     exit 0
@@ -2093,6 +2110,7 @@ LOG_FILE="$WINDOW_STATE_LOG"
 INTERVAL="\${OMARCHY_WINDOW_STATE_SAVE_INTERVAL:-$WINDOW_STATE_SAVE_INTERVAL_SECONDS}"
 SAVE_WAIT_ATTEMPTS="\${OMARCHY_WINDOW_SAVE_WAIT_ATTEMPTS:-5}"
 RESTORE_GUARD="\${OMARCHY_WINDOW_RESTORE_GUARD:-\${TMPDIR:-/tmp}/omarchy_window_state_restore_active}"
+STARTUP_RESTORE_GUARD="\${OMARCHY_WINDOW_STARTUP_RESTORE_GUARD:-\${TMPDIR:-/tmp}/omarchy_window_state_startup_restore_active}"
 sleep_pid=""
 
 log_msg() {
@@ -2105,7 +2123,7 @@ save_now() {
     log_msg "window state helper missing at \$HELPER"
     return 0
   fi
-  if [[ -e "\$RESTORE_GUARD" ]]; then
+  if [[ -e "\$RESTORE_GUARD" || -e "\$STARTUP_RESTORE_GUARD" ]]; then
     log_msg "restore active; skipped window state save (\$reason)"
     return 0
   fi

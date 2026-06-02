@@ -38,8 +38,10 @@ come back after reboot:
 ./install.sh save-window-state
 ```
 
-The saved state is restored automatically at login/startup. You can also replay
-it manually:
+The saved state is restored automatically at login/startup. Startup autosaves
+are held until restore finishes so login events cannot replace the pre-reboot
+snapshot. Windows without a saved location or explicit app rule fall back to
+workspace `00`. You can also replay the saved state manually:
 
 ```sh
 ./install.sh restore-window-state

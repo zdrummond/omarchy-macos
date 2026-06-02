@@ -13,6 +13,7 @@ MONITORS_FILE="$TMP_ROOT/monitors.txt"
 WINDOWS_FILE="$TMP_ROOT/windows.txt"
 MOVES_FILE="$TMP_ROOT/moves.txt"
 GUARD_FILE="$TMP_ROOT/restore-active"
+STARTUP_GUARD_FILE="$TMP_ROOT/startup-restore-active"
 
 awk '/^#!\/usr\/bin\/env perl$/{in_block=1} in_block{print} /^WINDOW_STATE_PERL_EOF$/{exit}' "$ROOT/install.sh" | sed '$d' > "$HELPER"
 chmod +x "$HELPER"
@@ -104,6 +105,7 @@ export OMARCHY_WINDOW_RESTORE_ATTEMPTS=1
 export OMARCHY_WINDOW_RESTORE_DELAY=0
 export OMARCHY_WINDOW_SAVE_WAIT_ATTEMPTS=1
 export OMARCHY_WINDOW_RESTORE_GUARD="$GUARD_FILE"
+export OMARCHY_WINDOW_STARTUP_RESTORE_GUARD="$STARTUP_GUARD_FILE"
 export OMARCHY_WINDOW_DEBOUNCED_SAVER="$TMP_ROOT/missing-debounced-save"
 export OMARCHY_FAKE_MONITORS="$MONITORS_FILE"
 export OMARCHY_FAKE_WINDOWS="$WINDOWS_FILE"
@@ -273,6 +275,11 @@ cp "$STATE_FILE" "$STATE_FILE.before"
 touch "$GUARD_FILE"
 run_save auto guarded
 rm -f "$GUARD_FILE"
+cmp -s "$STATE_FILE.before" "$STATE_FILE"
+
+touch "$STARTUP_GUARD_FILE"
+run_save auto startup-guarded
+rm -f "$STARTUP_GUARD_FILE"
 cmp -s "$STATE_FILE.before" "$STATE_FILE"
 
 printf 'window_state_fake.sh: all checks passed\n'
