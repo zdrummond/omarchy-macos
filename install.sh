@@ -38,6 +38,7 @@ SKHD_CFG="$SKHD_DIR/skhdrc"
 SKETCHY_DIR="$HOME/.config/sketchybar"
 BORDERS_DIR="$HOME/.config/borders"
 BORDERS_INSTALLED_MARKER="$BACKUP_DIR/.borders-installed"
+BORDERS_SERVICE_PLIST="$HOME/Library/LaunchAgents/homebrew.mxcl.borders.plist"
 
 BAR_TOGGLE_LABEL="com.omarchy-macos.bar_toggle"
 BAR_TOGGLE_PLIST="$HOME/Library/LaunchAgents/$BAR_TOGGLE_LABEL.plist"
@@ -108,6 +109,8 @@ cmd_install() {
   write_window_state_helper
   write_window_state_saver_agent
   write_goto_space_helper
+  write_window_cycle_helper
+  write_window_picker_helper
   write_aerospace_start_agent
   write_skhd_config
   write_sketchybar_config
@@ -163,6 +166,8 @@ cmd_refresh() {
   write_window_state_helper
   write_window_state_saver_agent
   write_goto_space_helper
+  write_window_cycle_helper
+  write_window_picker_helper
   write_aerospace_start_agent
   write_skhd_config
   write_sketchybar_config
@@ -658,6 +663,10 @@ start_services() {
       warn "Could not auto-start borders"
   else
     info "Skipping optional borders service"
+    if [[ -f "$BORDERS_SERVICE_PLIST" ]]; then
+      launchctl bootout "gui/$(id -u)" "$BORDERS_SERVICE_PLIST" 2>/dev/null && \
+        info "  stopped disabled borders service" || true
+    fi
   fi
 
   info "Disabling bar_toggle daemon..."
@@ -694,17 +703,25 @@ stop_services() {
   if [[ -f "$SHORTCUT_WIDGET_PLIST" ]]; then
     launchctl unload "$SHORTCUT_WIDGET_PLIST" 2>/dev/null && info "  stopped shortcut widget" || true
   fi
-  local services=(sketchybar aerospace)
   if borders_enabled || [[ "$mode" == "revert" ]]; then
-    services=(borders "${services[@]}")
+    stop_brew_service borders
+  elif [[ -f "$BORDERS_SERVICE_PLIST" ]]; then
+    launchctl bootout "gui/$(id -u)" "$BORDERS_SERVICE_PLIST" 2>/dev/null && \
+      info "  stopped disabled borders service" || true
   fi
+  local services=(sketchybar aerospace)
   for svc in "${services[@]}"; do
-    if brew services list | grep -q "^$svc"; then
-      brew services stop "$svc" 2>/dev/null && info "  stopped $svc" || true
-    fi
+    stop_brew_service "$svc"
   done
   skhd --stop-service 2>/dev/null && info "  stopped skhd" || true
   success "Services stopped"
+}
+
+stop_brew_service() {
+  local svc="$1"
+  if brew services list | grep -q "^$svc"; then
+    brew services stop "$svc" 2>/dev/null && info "  stopped $svc" || true
+  fi
 }
 
 check_service() {
@@ -817,11 +834,6 @@ write_aerospace_config() {
 # ── Behavior ──────────────────────────────────────────────────────────────────
 after-startup-command = ['exec-and-forget ~/.config/aerospace/startup_restore.sh']
 
-# Automatically move focus to wherever your mouse is
-on-focus-changed = [
-  'move-mouse window-lazy-center'
-]
-
 # Start Aerospace on login
 start-at-login = true
 
@@ -884,6 +896,9 @@ alt-j = 'focus down'
 alt-k = 'focus up'
 alt-l = 'focus right'
 
+# ── Window overview: ⌥ + Up ──────────────────────────────────────────────
+alt-up = 'exec-and-forget ~/.config/aerospace/window_picker.sh'
+
 # ── Move window: ⌥ + Shift + h/j/k/l ─────────────────────────────────────
 # (mirrors Hyprland: SUPER + SHIFT + h/j/k/l)
 alt-shift-h = 'move left'
@@ -926,6 +941,8 @@ alt-shift-r = 'reload-config'
 # ⌥ + shift + tab → previous workspace
 alt-tab       = 'exec-and-forget ~/.config/aerospace/workspace_back_and_forth.sh'
 alt-shift-tab = 'move-workspace-to-monitor --wrap-around next'
+alt-ctrl-tab = 'exec-and-forget ~/.config/aerospace/window_cycle.sh next'
+alt-ctrl-shift-tab = 'exec-and-forget ~/.config/aerospace/window_cycle.sh prev'
 
 # ── Move to next/prev monitor ─────────────────────────────────────────────
 alt-ctrl-shift-h = 'exec-and-forget ~/.config/aerospace/move_node_to_monitor_and_save.sh left'
@@ -942,10 +959,6 @@ check-further-callbacks = true
 
 # App-assignment rules default to monitor 0's spaces ("0N"). If a second
 # monitor is attached, move the app to <monitor><N> manually after launch.
-[[on-window-detected]]
-if.app-name-regex-substring = 'Gmail'
-run = ['move-node-to-workspace 01', 'workspace 01']
-
 [[on-window-detected]]
 if.app-name-regex-substring = 'Messages'
 run = ['move-node-to-workspace 02', 'workspace 02']
@@ -986,9 +999,12 @@ run = ['move-node-to-workspace 06', 'workspace 06']
 if.app-name-regex-substring = 'Steam'
 run = ['move-node-to-workspace 00', 'workspace 00']
 
-# Windows without an explicit app rule start on monitor 0's fallback workspace.
+# Keep authentication prompts and password dialogs visible on the current
+# workspace. AeroSpace cannot force true "always on top", but floating and
+# avoiding fallback rehoming prevents these dialogs from blinking away to 00.
 [[on-window-detected]]
-run = ['move-node-to-workspace 00', 'workspace 00']
+if.app-name-regex-substring = '1Password'
+run = ['layout floating']
 
 # [[on-window-detected]]
 # if.app-name-regex-substring = 'slack|discord'
@@ -1576,7 +1592,6 @@ sub assigned_workspace {
     my $app = $window->{app_name} || "";
     my $bundle = $window->{app_bundle_id} || "";
 
-    return "01" if $app =~ /Gmail/i;
     return "02" if $app =~ /Messages|Signal/i;
     return "03" if $app =~ /Spotify|Music/i;
     return "04" if $app =~ /Ghostty|WezTerm|Warp|iTerm2/i;
@@ -2260,6 +2275,156 @@ WORKSPACE_BACK_AND_FORTH_EOF
 }
 
 # =============================================================================
+# WINDOW CYCLE HELPER
+# Cycles focus through every AeroSpace-managed window, switching workspaces as
+# needed before focusing the target window.
+# =============================================================================
+write_window_cycle_helper() {
+  info "Writing window_cycle helper..."
+  mkdir -p "$AEROSPACE_DIR"
+
+  cat > "$AEROSPACE_DIR/window_cycle.sh" << 'WINDOW_CYCLE_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+DIRECTION="${1:-next}"
+case "$DIRECTION" in
+  next|prev) ;;
+  *)
+    echo "window_cycle.sh: usage: window_cycle.sh next|prev" >&2
+    exit 1
+    ;;
+esac
+
+focused_id="$(aerospace list-windows --focused --format '%{window-id}' 2>/dev/null | head -n 1 || true)"
+
+ids=()
+workspaces=()
+while IFS='|' read -r window_id workspace; do
+  [[ "$window_id" =~ ^[0-9]+$ ]] || continue
+  [ -n "$workspace" ] || continue
+  ids+=("$window_id")
+  workspaces+=("$workspace")
+done < <(aerospace list-windows --all --format '%{window-id}|%{workspace}')
+
+count="${#ids[@]}"
+[ "$count" -gt 0 ] || exit 0
+
+current=-1
+for idx in "${!ids[@]}"; do
+  if [ "${ids[$idx]}" = "$focused_id" ]; then
+    current="$idx"
+    break
+  fi
+done
+
+if [ "$current" -lt 0 ]; then
+  if [ "$DIRECTION" = "prev" ]; then
+    target=$((count - 1))
+  else
+    target=0
+  fi
+elif [ "$DIRECTION" = "prev" ]; then
+  target=$(((current - 1 + count) % count))
+else
+  target=$(((current + 1) % count))
+fi
+
+target_id="${ids[$target]}"
+target_workspace="${workspaces[$target]}"
+
+aerospace workspace "$target_workspace" >/dev/null 2>&1 || true
+aerospace focus --window-id "$target_id"
+"$HOME/.config/aerospace/responsive_layout.sh" "window-cycle-$DIRECTION" >/dev/null 2>&1 || true
+"$HOME/.config/sketchybar/plugins/hide_bar.sh" >/dev/null 2>&1 || true
+WINDOW_CYCLE_EOF
+
+  chmod +x "$AEROSPACE_DIR/window_cycle.sh"
+  success "window_cycle helper written to $AEROSPACE_DIR/window_cycle.sh"
+}
+
+# =============================================================================
+# WINDOW PICKER HELPER
+# Shows a readable list of all AeroSpace-managed windows and focuses the chosen
+# one. This is more useful than Mission Control when the thumbnail grid gets too
+# small to scan.
+# =============================================================================
+write_window_picker_helper() {
+  info "Writing window_picker helper..."
+  mkdir -p "$AEROSPACE_DIR"
+
+  cat > "$AEROSPACE_DIR/window_picker.sh" << 'WINDOW_PICKER_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+labels_file="${TMPDIR:-/tmp}/omarchy_window_picker.$$.labels"
+map_file="${TMPDIR:-/tmp}/omarchy_window_picker.$$.map"
+script="${TMPDIR:-/tmp}/omarchy_window_picker.$$.applescript"
+trap 'rm -f "$labels_file" "$map_file" "$script"' EXIT
+
+idx=0
+while IFS='|' read -r window_id workspace app title; do
+  [[ "$window_id" =~ ^[0-9]+$ ]] || continue
+  [ -n "$workspace" ] || workspace="?"
+  [ -n "$app" ] || app="Unknown"
+  if [ -n "$title" ]; then
+    label="[$workspace] $app — $title"
+  else
+    label="[$workspace] $app"
+  fi
+  idx=$((idx + 1))
+  key="$(printf "%03d" "$idx")"
+  printf "%s  %s\n" "$key" "$label" >> "$labels_file"
+  printf "%s|%s|%s\n" "$key" "$window_id" "$workspace" >> "$map_file"
+done < <(aerospace list-windows --all --format '%{window-id}|%{workspace}|%{app-name}|%{window-title}')
+
+[ -s "$labels_file" ] || exit 0
+
+printf "%s\n" \
+  "on run argv" \
+  "  set pickerFile to item 1 of argv" \
+  "  set rows to paragraphs of (read POSIX file pickerFile)" \
+  "  set labels to {}" \
+  "  repeat with row in rows" \
+  "    if row is not \"\" then" \
+  "      set end of labels to row" \
+  "    end if" \
+  "  end repeat" \
+  "  if (count of labels) is 0 then return \"\"" \
+  "  set selected to choose from list labels with title \"Windows\" with prompt \"Jump to window:\" OK button name \"Focus\" cancel button name \"Cancel\"" \
+  "  if selected is false then return \"\"" \
+  "  return item 1 of selected" \
+  "end run" \
+  > "$script"
+
+choice="$(/usr/bin/osascript "$script" "$labels_file")"
+
+[ -n "$choice" ] || exit 0
+
+selected_key="${choice%%  *}"
+target_id=""
+target_workspace=""
+while IFS="|" read -r key window_id workspace; do
+  if [ "$key" = "$selected_key" ]; then
+    target_id="$window_id"
+    target_workspace="$workspace"
+    break
+  fi
+done < "$map_file"
+
+[ -n "$target_id" ] || exit 0
+
+aerospace workspace "$target_workspace" >/dev/null 2>&1 || true
+aerospace focus --window-id "$target_id"
+"$HOME/.config/aerospace/responsive_layout.sh" "window-picker" >/dev/null 2>&1 || true
+"$HOME/.config/sketchybar/plugins/hide_bar.sh" >/dev/null 2>&1 || true
+WINDOW_PICKER_EOF
+
+  chmod +x "$AEROSPACE_DIR/window_picker.sh"
+  success "window_picker helper written to $AEROSPACE_DIR/window_picker.sh"
+}
+
+# =============================================================================
 # AEROSPACE LOGIN STARTER
 # Starts AeroSpace at login without hiding/suspending the app. AeroSpace's own
 # start-at-login setting is still enabled, but this gives the generated setup an
@@ -2354,6 +2519,11 @@ alt + shift - s : screencapture -ic
 
 # Full screenshot → clipboard
 alt - p : screencapture -c
+
+# ── Window overview ───────────────────────────────────────────────────────
+# Native Mission Control is still available, but the normal all-window picker
+# is bound in AeroSpace as ⌥+Up so it follows the same input path as ⌥+h/j/k/l.
+alt + shift - up : open -a "Mission Control"
 
 # ── SketchyBar visibility toggle ──────────────────────────────────────────
 alt - z : ~/.config/sketchybar/plugins/toggle_bar.sh
@@ -2866,11 +3036,9 @@ WIFI_PLUGIN_EOF
 # =============================================================================
 # CHROME REHOME DAEMON
 #
-# Swift binary that subscribes to Chrome's AXWindowCreated events and moves
-# each newly-opened window to the first empty workspace on the monitor where
-# Chrome created it. If every workspace on that monitor is occupied, the
-# window stays put. Aerospace's on-window-detected.run accepts only action
-# commands (no shell-out), so this lives out-of-band as a LaunchAgent.
+# Swift binary that subscribes to Chrome's AXWindowCreated events and records
+# the updated window state. It deliberately leaves new Chrome windows on the
+# workspace where they were created.
 # =============================================================================
 write_chrome_rehome_daemon() {
   info "Writing chrome_rehome daemon..."
@@ -2889,7 +3057,6 @@ func _AXUIElementGetWindow(_ element: AXUIElement, _ windowId: UnsafeMutablePoin
 let aerospacePath = "/opt/homebrew/bin/aerospace"
 let debouncedSavePath = NSHomeDirectory() + "/.config/aerospace/window_state_debounced_save.sh"
 let chromeBundleID = "com.google.Chrome"
-let scanOrder: [String] = ["1","2","3","4","5","6","7","8","9","0"]
 let aerospaceStartupAttempts = 60
 let windowListingAttempts = 60
 
@@ -2945,23 +3112,6 @@ func waitForAerospace() -> Bool {
     return false
 }
 
-func activeMonitorSlotCount() -> Int {
-    let out = sh(["list-monitors", "--format", "%{monitor-id}"])
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    return out.split(separator: "\n").count
-}
-
-func firstEmptyOnMonitor(_ monitor: String, skip currentWs: String) -> String? {
-    for key in scanOrder {
-        let ws = "\(monitor)\(key)"
-        if ws == currentWs { continue }
-        let out = sh(["list-windows", "--workspace", ws, "--format", "%{window-id}"])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if out.isEmpty { return ws }
-    }
-    return nil
-}
-
 func handleNewWindow(_ wid: CGWindowID) {
     guard waitForAerospace() else {
         log("Chrome window \(wid): AeroSpace was not reachable; leaving in place")
@@ -2971,38 +3121,16 @@ func handleNewWindow(_ wid: CGWindowID) {
     for attempt in 0..<windowListingAttempts {
         let listing = sh(["list-windows", "--all", "--format", "%{window-id}|%{workspace}|%{app-name}"])
         var currentWs: String? = nil
-        struct Row { let id: UInt32; let ws: String; let app: String }
-        var rows: [Row] = []
         for line in listing.split(separator: "\n") {
             let parts = line.split(separator: "|", maxSplits: 2)
             guard parts.count == 3, let id = UInt32(parts[0]) else { continue }
-            let row = Row(id: id, ws: String(parts[1]), app: String(parts[2]))
-            rows.append(row)
-            if id == wid { currentWs = row.ws }
+            if id == wid { currentWs = String(parts[1]) }
         }
         guard let ws = currentWs else {
             if attempt < windowListingAttempts - 1 { Thread.sleep(forTimeInterval: 0.5) }
             continue
         }
-        let siblingChromeOnWs = rows.contains {
-            $0.ws == ws && $0.id != wid && $0.app == "Google Chrome"
-        }
-        if siblingChromeOnWs {
-            log("Chrome window \(wid) on \(ws): already has Chrome here, leaving in place")
-            scheduleWindowStateSave("chrome-window-detected")
-            return
-        }
-        guard let monitor = ws.first else { return }
-        let monitorSlot = Int(String(monitor)) ?? 0
-        let activeSlotCount = activeMonitorSlotCount()
-        let targetMonitor = monitorSlot < activeSlotCount ? String(monitor) : "0"
-        if let target = firstEmptyOnMonitor(targetMonitor, skip: ws) {
-            log("Chrome window \(wid) alone on \(ws) -> \(target)")
-            sh(["move-node-to-workspace", "--window-id", "\(wid)", target])
-            sh(["workspace", target])
-        } else {
-            log("Chrome window \(wid) alone on \(ws): monitor \(targetMonitor) full, leaving in place")
-        }
+        log("Chrome window \(wid) on \(ws): leaving in place")
         scheduleWindowStateSave("chrome-window-detected")
         return
     }

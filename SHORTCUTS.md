@@ -10,6 +10,8 @@ All shortcuts use **Option (⌥)** as the modifier key, mirroring the SUPER key 
 | ⌥ + Shift + 1–0 | Move focused window to workspace 1–10 |
 | ⌥ + Tab | Toggle back and forth between last workspace |
 | ⌥ + Shift + Tab | Move workspace to next monitor |
+| ⌥ + Ctrl + Tab | Focus next window across all workspaces |
+| ⌥ + Ctrl + Shift + Tab | Focus previous window across all workspaces |
 
 ## Window Focus
 
@@ -19,6 +21,13 @@ All shortcuts use **Option (⌥)** as the modifier key, mirroring the SUPER key 
 | ⌥ + J | Focus window down |
 | ⌥ + K | Focus window up |
 | ⌥ + L | Focus window right |
+
+## Window Overview
+
+| Shortcut | Action |
+|----------|--------|
+| ⌥ + Up | Readable all-window picker |
+| ⌥ + Shift + Up | Mission Control / expose |
 
 ## Window Movement
 

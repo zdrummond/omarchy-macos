@@ -44,22 +44,31 @@ Default slot-0 app assignments:
 
 | Workspace | App(s) |
 |---|---|
-| 01 | Gmail (Chrome window) |
+| 01 | Mail workspace; Gmail Chrome app windows are not force-managed |
 | 02 (Msg) | Messages, Signal |
 | 03 | Spotify, Music |
 | 04 (Terms) | Ghostty, WezTerm, Warp, iTerm |
 | 05 (Editors) | Zed, VS Code, Antigravity |
 | 06 (Agents) | Claude desktop, Gemini, ChatGPT |
 | 00 | Steam |
-| 00 (fallback) | Apps without an explicit rule or restored saved location |
+| current workspace | Apps without an explicit rule or restored saved location |
 
 ## Key Behaviors
 
-- **Focus follows mouse** (lazy center on window focus change)
+- **Focus changes do not warp the pointer.** Browser links and buttons must
+  receive clicks at the user's chosen cursor position.
 - **Exact reboot restore** is snapshot-based. `./install.sh save-window-state` captures the current AeroSpace window list, including window id, workspace, app name, app bundle id, and title, to `~/.config/aerospace/omarchy_window_state.json`. A LaunchAgent refreshes that snapshot every 15 minutes and performs one best-effort save when macOS logs out or shuts down. App-assigned windows are canonicalized to their declared workspaces before save/restore so temporary drift cannot become reboot state. On login/startup, `startup_restore.sh` blocks autosaves before its first repair pass, waits for AeroSpace, repairs detached-monitor workspaces, then retries matching restored windows by window id + app identity, app bundle id + title, app name + title, and app identity for canonical app-assigned windows before moving them back to their saved workspaces. Autosaves resume after startup restore finishes.
 - **Workspace repair** migrates windows from detached monitor-prefixed workspaces back to slot `0`, migrates visible legacy single-digit workspaces like `2` to the active monitor's slot-prefixed workspace like `12`, and repins any visible two-digit workspace that is shown on the wrong monitor.
 - **SketchyBar** creates separate space items per monitor slot and scopes them to each SketchyBar display. Each bar shows only that monitor's workspace set; active workspaces are highlighted in blue, inactive workspaces with apps are mauve, and empty workspaces are dimmed.
 - **Bar visibility defaults off.** SketchyBar starts hidden and toggles with `⌥ + Z`; `⌥+1-0` workspace switches and `⌥+Tab` hide it again. Press-to-peek is disabled because the modifier polling/repaint path can make SketchyBar unresponsive on multi-monitor setups.
+- **Window discovery** includes `⌥+Up` for a readable all-window picker,
+  `⌥+Shift+Up` for Mission Control / expose, plus `⌥+Ctrl+Tab` and
+  `⌥+Ctrl+Shift+Tab` to cycle through every AeroSpace-managed window across
+  workspaces.
+- **Unassigned windows stay where they open** so browser popups, compose
+  windows, and transient dialogs are not moved by a global catch-all rule.
+- **1Password dialogs** are floated so authentication prompts stay usable on
+  the current workspace.
 - **Front app label** in bar shows `<workspace> <app name>`
 - **Right-side bar** has wifi SSID, battery level with color-coded icons, and clock
 - **Optional JankyBorders** draws a 3px mauve border on the focused window, surface0 on all others when `OMARCHY_ENABLE_BORDERS=1` is set during install/refresh
@@ -68,7 +77,8 @@ Default slot-0 app assignments:
   accordion layout when the estimated split width would fall below 640 points
   per window. This keeps laptop-width displays usable once a workspace grows
   beyond two or three tiled windows.
-- **Chrome new-window rehome** watches Chrome window creation and moves a lone new Chrome window to the first empty workspace on the monitor where Chrome opened it.
+- **Chrome new-window state save** watches Chrome window creation and records
+  the updated layout without moving the window.
 
 ## Installer Behavior
 

@@ -50,8 +50,14 @@ actual="$(cat "$LOG_FILE")"
 
 /usr/bin/perl -0777 -e '
   my $source = <>;
-  die "missing catch-all workspace 00 rule\n"
-    unless $source =~ /\[\[on-window-detected\]\]\nrun = \['\''move-node-to-workspace 00'\'', '\''workspace 00'\''\]\n\n# \[\[on-window-detected\]\]/;
+  die "unexpected named-space rehome catch-all\n"
+    if $source =~ /\[\[on-window-detected\]\]\nrun = \['\''exec-and-forget ~\/\.config\/aerospace\/named_space_rehome\.sh'\''\]/;
+  die "unexpected blind catch-all workspace 00 rule\n"
+    if $source =~ /\[\[on-window-detected\]\]\nrun = \['\''move-node-to-workspace 00'\''/s;
+  die "unexpected Gmail app-name workspace rule\n"
+    if $source =~ /if\.app-name-regex-substring = '\''Gmail'\''/;
+  die "unexpected Gmail canonical workspace assignment\n"
+    if $source =~ /return "01" if \$app =~ \/Gmail\/i;/;
 ' "$ROOT/install.sh"
 
 printf 'startup_restore_fake.sh: all checks passed\n'
