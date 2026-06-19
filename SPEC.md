@@ -77,8 +77,10 @@ Default slot-0 app assignments:
   accordion layout when the estimated split width would fall below 640 points
   per window. This keeps laptop-width displays usable once a workspace grows
   beyond two or three tiled windows.
-- **Chrome new-window state save** watches Chrome window creation and records
-  the updated layout without moving the window.
+- **Chrome new-window rehome** uses an Accessibility-trusted LaunchAgent to
+  watch ordinary Chrome window creation, moves a new window to the first empty
+  workspace on its monitor when the current workspace does not already contain
+  Chrome, then records the updated layout.
 
 ## Installer Behavior
 
@@ -92,7 +94,8 @@ Default slot-0 app assignments:
   desktop-level shortcut cheatsheet widget during install/refresh and via
   `./install.sh shortcuts-widget`
 - Loads a window-state saver LaunchAgent that saves every 15 minutes and traps launchd termination for best-effort logout/shutdown saves
-- Loads an AeroSpace login LaunchAgent and a Chrome rehome LaunchAgent
+- Loads an AeroSpace login LaunchAgent and the Accessibility-backed Chrome
+  rehome LaunchAgent
 - Leaves an install marker at `~/.omarchy-macos-backup/.installed` to prevent duplicate installs
 - `revert` stops services, unloads the LaunchAgent, removes configs, restores backups, uninstalls packages
 

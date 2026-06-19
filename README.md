@@ -42,8 +42,10 @@ The saved state is restored automatically at login/startup. Startup autosaves
 are held until restore finishes so login events cannot replace the pre-reboot
 snapshot. Windows without a saved location or explicit app rule stay where
 they are created so browser popups and transient dialogs are not moved out from
-under the app that opened them. Chrome app wrappers such as the Gmail app are
-also left unmanaged by app-name rules because their click handling is more
+under the app that opened them. Ordinary Chrome windows are the exception: new
+windows move to the first empty workspace on their monitor unless that
+workspace already contains Chrome. Chrome app wrappers such as the Gmail app
+are left unmanaged by app-name rules because their click handling is more
 sensitive than ordinary Chrome tabs. You can also replay the saved state
 manually:
 

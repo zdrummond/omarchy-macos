@@ -46,6 +46,9 @@ BAR_TOGGLE_PLIST="$HOME/Library/LaunchAgents/$BAR_TOGGLE_LABEL.plist"
 AEROSPACE_START_LABEL="com.omarchy-macos.aerospace_start"
 AEROSPACE_START_PLIST="$HOME/Library/LaunchAgents/$AEROSPACE_START_LABEL.plist"
 
+WINDOW_PICKER_SRC="$AEROSPACE_DIR/window_picker.swift"
+WINDOW_PICKER_BIN="$AEROSPACE_DIR/window_picker"
+
 CHROME_REHOME_SRC="$SKETCHY_DIR/plugins/chrome_rehome.swift"
 CHROME_REHOME_LABEL="com.omarchy-macos.chrome_rehome"
 CHROME_REHOME_APP="$HOME/Applications/Omarchy Chrome Rehome.app"
@@ -483,7 +486,6 @@ cmd_status() {
   fi
   check_launch_agent "$AEROSPACE_START_LABEL"
   check_launch_agent "$WINDOW_STATE_SAVER_LABEL"
-  check_launch_agent "$CHROME_REHOME_LABEL"
   check_launch_agent "$SHORTCUT_WIDGET_LABEL"
 
   echo ""
@@ -493,7 +495,7 @@ cmd_status() {
     warn "AeroSpace server is not reachable — window restore and workspace moves will fail"
   fi
   if [[ -f /tmp/chrome_rehome.log ]] && awk '/AXIsProcessTrusted/ { last=$0 } END { exit(last ~ /false/ ? 0 : 1) }' /tmp/chrome_rehome.log 2>/dev/null; then
-    warn "chrome_rehome is not Accessibility-trusted — grant it in Privacy & Security → Accessibility"
+    warn "chrome_rehome is not Accessibility-trusted — grant Omarchy Chrome Rehome in Privacy & Security → Accessibility"
   fi
   check_window_state
 
@@ -1242,6 +1244,41 @@ omarchy_repair_detached_monitor_workspaces() {
     fi
   done <<< "$rows"
 }
+
+omarchy_assigned_workspace_for_app() {
+  local app_name="$1"
+  local bundle_id="$2"
+
+  case "$app_name" in
+    *Messages*|*Signal*) printf '02\n'; return 0 ;;
+    *Spotify*|*Music*) printf '03\n'; return 0 ;;
+    *Ghostty*|*WezTerm*|*Warp*|*iTerm2*) printf '04\n'; return 0 ;;
+    *Zed*|*Antigravity*) printf '05\n'; return 0 ;;
+    *ChatGPT*) printf '06\n'; return 0 ;;
+    *Steam*) printf '00\n'; return 0 ;;
+  esac
+
+  case "$bundle_id" in
+    com.anthropic.claudefordesktop|com.google.GeminiMacOS|com.openai.chat)
+      printf '06\n'
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+omarchy_repair_app_assigned_workspaces() {
+  local rows line window_id workspace app_name bundle_id target
+  rows=$("$OMARCHY_AEROSPACE_BIN" list-windows --all --format '%{window-id}|%{workspace}|%{app-name}|%{app-bundle-id}' 2>/dev/null) || return 1
+  while IFS= read -r line; do
+    IFS='|' read -r window_id workspace app_name bundle_id <<< "$line"
+    [[ "$window_id" =~ ^[0-9]+$ ]] || continue
+    target=$(omarchy_assigned_workspace_for_app "$app_name" "$bundle_id" 2>/dev/null) || continue
+    [ "$workspace" = "$target" ] && continue
+    "$OMARCHY_AEROSPACE_BIN" move-node-to-workspace --window-id "$window_id" "$target" >/dev/null 2>&1 || true
+  done <<< "$rows"
+}
 SPACE_STATE_EOF
 
   chmod +x "$AEROSPACE_DIR/omarchy_space_state.sh"
@@ -1367,6 +1404,7 @@ fi
 
 for _ in {1..6}; do
   omarchy_repair_detached_monitor_workspaces || true
+  omarchy_repair_app_assigned_workspaces || true
   sleep 2
 done
 REPAIR_SPACES_EOF
@@ -2357,10 +2395,9 @@ write_window_picker_helper() {
 #!/usr/bin/env bash
 set -euo pipefail
 
-labels_file="${TMPDIR:-/tmp}/omarchy_window_picker.$$.labels"
-map_file="${TMPDIR:-/tmp}/omarchy_window_picker.$$.map"
-script="${TMPDIR:-/tmp}/omarchy_window_picker.$$.applescript"
-trap 'rm -f "$labels_file" "$map_file" "$script"' EXIT
+picker_bin="$HOME/.config/aerospace/window_picker"
+data_file="${TMPDIR:-/tmp}/omarchy_window_picker.$$.tsv"
+trap 'rm -f "$data_file"' EXIT
 
 idx=0
 while IFS='|' read -r window_id workspace app title; do
@@ -2368,43 +2405,28 @@ while IFS='|' read -r window_id workspace app title; do
   [ -n "$workspace" ] || workspace="?"
   [ -n "$app" ] || app="Unknown"
   if [ -n "$title" ]; then
-    label="[$workspace] $app — $title"
+    label="[$workspace] $app - $title"
   else
     label="[$workspace] $app"
   fi
   idx=$((idx + 1))
   key="$(printf "%03d" "$idx")"
-  printf "%s  %s\n" "$key" "$label" >> "$labels_file"
-  printf "%s|%s|%s\n" "$key" "$window_id" "$workspace" >> "$map_file"
+  label="${label//$'\t'/ }"
+  printf "%s\t%s\t%s\t%s  %s\n" "$key" "$window_id" "$workspace" "$key" "$label" >> "$data_file"
 done < <(aerospace list-windows --all --format '%{window-id}|%{workspace}|%{app-name}|%{window-title}')
 
-[ -s "$labels_file" ] || exit 0
+[ -s "$data_file" ] || exit 0
+[ -x "$picker_bin" ] || {
+  echo "window_picker.sh: missing $picker_bin; run ./install.sh refresh" >&2
+  exit 1
+}
 
-printf "%s\n" \
-  "on run argv" \
-  "  set pickerFile to item 1 of argv" \
-  "  set rows to paragraphs of (read POSIX file pickerFile)" \
-  "  set labels to {}" \
-  "  repeat with row in rows" \
-  "    if row is not \"\" then" \
-  "      set end of labels to row" \
-  "    end if" \
-  "  end repeat" \
-  "  if (count of labels) is 0 then return \"\"" \
-  "  set selected to choose from list labels with title \"Windows\" with prompt \"Jump to window:\" OK button name \"Focus\" cancel button name \"Cancel\"" \
-  "  if selected is false then return \"\"" \
-  "  return item 1 of selected" \
-  "end run" \
-  > "$script"
+selected_key="$("$picker_bin" "$data_file")"
+[ -n "$selected_key" ] || exit 0
 
-choice="$(/usr/bin/osascript "$script" "$labels_file")"
-
-[ -n "$choice" ] || exit 0
-
-selected_key="${choice%%  *}"
 target_id=""
 target_workspace=""
-while IFS="|" read -r key window_id workspace; do
+while IFS=$'\t' read -r key window_id workspace label; do
   if [ "$key" = "$selected_key" ]; then
     target_id="$window_id"
     target_workspace="$workspace"
@@ -2420,7 +2442,203 @@ aerospace focus --window-id "$target_id"
 "$HOME/.config/sketchybar/plugins/hide_bar.sh" >/dev/null 2>&1 || true
 WINDOW_PICKER_EOF
 
-  chmod +x "$AEROSPACE_DIR/window_picker.sh"
+  cat > "$WINDOW_PICKER_SRC" << 'WINDOW_PICKER_SWIFT_EOF'
+import AppKit
+
+struct WindowRow {
+    let key: String
+    let windowId: String
+    let workspace: String
+    let label: String
+}
+
+final class PickerController: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate {
+    private let rows: [WindowRow]
+    private let table = NSTableView()
+    private let preview = NSImageView()
+    private let previewLabel = NSTextField(labelWithString: "Select a window")
+    private var selectedKey: String?
+
+    init(rows: [WindowRow]) {
+        self.rows = rows
+        super.init()
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1180, height: 720),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Windows"
+        window.center()
+        let container = NSView()
+        window.contentView = container
+
+        let root = NSStackView()
+        root.orientation = .vertical
+        root.spacing = 12
+        root.edgeInsets = NSEdgeInsets(top: 18, left: 18, bottom: 18, right: 18)
+        root.translatesAutoresizingMaskIntoConstraints = false
+
+        let title = NSTextField(labelWithString: "Jump to window:")
+        title.font = NSFont.systemFont(ofSize: 18, weight: .medium)
+        title.alignment = .left
+
+        let content = NSStackView()
+        content.orientation = .horizontal
+        content.spacing = 14
+        content.translatesAutoresizingMaskIntoConstraints = false
+
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("window"))
+        column.title = "Window"
+        table.addTableColumn(column)
+        table.headerView = nil
+        table.rowHeight = 26
+        table.usesAlternatingRowBackgroundColors = true
+        table.dataSource = self
+        table.delegate = self
+        table.doubleAction = #selector(focusSelected)
+        table.target = self
+        scroll.documentView = table
+
+        let previewBox = NSStackView()
+        previewBox.orientation = .vertical
+        previewBox.spacing = 8
+        previewBox.translatesAutoresizingMaskIntoConstraints = false
+        preview.imageScaling = .scaleProportionallyUpOrDown
+        preview.wantsLayer = true
+        preview.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        preview.layer?.borderColor = NSColor.separatorColor.cgColor
+        preview.layer?.borderWidth = 1
+        preview.translatesAutoresizingMaskIntoConstraints = false
+        previewLabel.font = NSFont.systemFont(ofSize: 13)
+        previewLabel.lineBreakMode = .byTruncatingMiddle
+        previewBox.addArrangedSubview(preview)
+        previewBox.addArrangedSubview(previewLabel)
+
+        content.addArrangedSubview(scroll)
+        content.addArrangedSubview(previewBox)
+
+        let buttons = NSStackView()
+        buttons.orientation = .horizontal
+        buttons.alignment = .centerY
+        buttons.spacing = 10
+        let spacer = NSView()
+        let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel))
+        let focus = NSButton(title: "Focus", target: self, action: #selector(focusSelected))
+        focus.keyEquivalent = "\r"
+        buttons.addArrangedSubview(spacer)
+        buttons.addArrangedSubview(cancel)
+        buttons.addArrangedSubview(focus)
+
+        root.addArrangedSubview(title)
+        root.addArrangedSubview(content)
+        root.addArrangedSubview(buttons)
+        container.addSubview(root)
+
+        NSLayoutConstraint.activate([
+            root.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            root.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            root.topAnchor.constraint(equalTo: container.topAnchor),
+            root.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            scroll.widthAnchor.constraint(equalTo: root.widthAnchor, multiplier: 0.56),
+            preview.widthAnchor.constraint(equalTo: root.widthAnchor, multiplier: 0.38),
+            preview.heightAnchor.constraint(equalTo: preview.widthAnchor, multiplier: 0.62),
+            content.heightAnchor.constraint(greaterThanOrEqualToConstant: 560)
+        ])
+
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        if !rows.isEmpty {
+            table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        }
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        rows.count
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let field = NSTextField(labelWithString: rows[row].label)
+        field.font = NSFont.monospacedSystemFont(ofSize: 16, weight: .regular)
+        field.lineBreakMode = .byTruncatingTail
+        return field
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        updatePreview()
+    }
+
+    private func updatePreview() {
+        let rowIndex = table.selectedRow
+        guard rowIndex >= 0 && rowIndex < rows.count else { return }
+        let row = rows[rowIndex]
+        selectedKey = row.key
+        previewLabel.stringValue = row.label
+
+        let path = NSTemporaryDirectory() + "omarchy_window_preview_\(row.windowId)_\(ProcessInfo.processInfo.processIdentifier).png"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        process.arguments = ["-x", "-l\(row.windowId)", path]
+        do {
+            try process.run()
+            process.waitUntilExit()
+            if process.terminationStatus == 0, let image = NSImage(contentsOfFile: path) {
+                preview.image = image
+            } else {
+                preview.image = nil
+            }
+        } catch {
+            preview.image = nil
+        }
+        try? FileManager.default.removeItem(atPath: path)
+    }
+
+    @objc private func focusSelected() {
+        if selectedKey == nil {
+            updatePreview()
+        }
+        if let key = selectedKey {
+            print(key)
+            fflush(stdout)
+        }
+        NSApp.terminate(nil)
+    }
+
+    @objc private func cancel() {
+        NSApp.terminate(nil)
+    }
+}
+
+let dataPath = CommandLine.arguments.dropFirst().first ?? ""
+let contents = (try? String(contentsOfFile: dataPath, encoding: .utf8)) ?? ""
+let rows = contents.split(separator: "\n").compactMap { line -> WindowRow? in
+    let parts = line.split(separator: "\t", maxSplits: 3, omittingEmptySubsequences: false)
+    guard parts.count == 4 else { return nil }
+    return WindowRow(key: String(parts[0]), windowId: String(parts[1]), workspace: String(parts[2]), label: String(parts[3]))
+}
+
+let app = NSApplication.shared
+let delegate = PickerController(rows: rows)
+app.delegate = delegate
+app.run()
+WINDOW_PICKER_SWIFT_EOF
+
+  if ! command -v swiftc &>/dev/null; then
+    warn "swiftc not found — install Xcode Command Line Tools (xcode-select --install)"
+    return 1
+  fi
+
+  info "Compiling window_picker..."
+  swiftc -O "$WINDOW_PICKER_SRC" -o "$WINDOW_PICKER_BIN"
+  chmod +x "$AEROSPACE_DIR/window_picker.sh" "$WINDOW_PICKER_BIN"
   success "window_picker helper written to $AEROSPACE_DIR/window_picker.sh"
 }
 
@@ -3036,9 +3254,11 @@ WIFI_PLUGIN_EOF
 # =============================================================================
 # CHROME REHOME DAEMON
 #
-# Swift binary that subscribes to Chrome's AXWindowCreated events and records
-# the updated window state. It deliberately leaves new Chrome windows on the
-# workspace where they were created.
+# Swift binary that subscribes to Chrome's AXWindowCreated events and moves
+# each newly-opened ordinary Chrome window to the first empty workspace on the
+# monitor where Chrome created it. If every workspace on that monitor is
+# occupied, the window stays put. The updated window state is saved after the
+# decision so reboot restore learns the final placement.
 # =============================================================================
 write_chrome_rehome_daemon() {
   info "Writing chrome_rehome daemon..."
@@ -3057,6 +3277,7 @@ func _AXUIElementGetWindow(_ element: AXUIElement, _ windowId: UnsafeMutablePoin
 let aerospacePath = "/opt/homebrew/bin/aerospace"
 let debouncedSavePath = NSHomeDirectory() + "/.config/aerospace/window_state_debounced_save.sh"
 let chromeBundleID = "com.google.Chrome"
+let scanOrder: [String] = ["1","2","3","4","5","6","7","8","9","0"]
 let aerospaceStartupAttempts = 60
 let windowListingAttempts = 60
 
@@ -3112,6 +3333,23 @@ func waitForAerospace() -> Bool {
     return false
 }
 
+func activeMonitorSlotCount() -> Int {
+    let out = sh(["list-monitors", "--format", "%{monitor-id}"])
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    return out.split(separator: "\n").count
+}
+
+func firstEmptyOnMonitor(_ monitor: String, skip currentWs: String) -> String? {
+    for key in scanOrder {
+        let ws = "\(monitor)\(key)"
+        if ws == currentWs { continue }
+        let out = sh(["list-windows", "--workspace", ws, "--format", "%{window-id}"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if out.isEmpty { return ws }
+    }
+    return nil
+}
+
 func handleNewWindow(_ wid: CGWindowID) {
     guard waitForAerospace() else {
         log("Chrome window \(wid): AeroSpace was not reachable; leaving in place")
@@ -3121,16 +3359,41 @@ func handleNewWindow(_ wid: CGWindowID) {
     for attempt in 0..<windowListingAttempts {
         let listing = sh(["list-windows", "--all", "--format", "%{window-id}|%{workspace}|%{app-name}"])
         var currentWs: String? = nil
+        struct Row { let id: UInt32; let ws: String; let app: String }
+        var rows: [Row] = []
         for line in listing.split(separator: "\n") {
             let parts = line.split(separator: "|", maxSplits: 2)
             guard parts.count == 3, let id = UInt32(parts[0]) else { continue }
-            if id == wid { currentWs = String(parts[1]) }
+            let row = Row(id: id, ws: String(parts[1]), app: String(parts[2]))
+            rows.append(row)
+            if id == wid { currentWs = row.ws }
         }
         guard let ws = currentWs else {
             if attempt < windowListingAttempts - 1 { Thread.sleep(forTimeInterval: 0.5) }
             continue
         }
-        log("Chrome window \(wid) on \(ws): leaving in place")
+        let siblingChromeOnWs = rows.contains {
+            $0.ws == ws && $0.id != wid && $0.app == "Google Chrome"
+        }
+        if siblingChromeOnWs {
+            log("Chrome window \(wid) on \(ws): already has Chrome here, leaving in place")
+            scheduleWindowStateSave("chrome-window-detected")
+            return
+        }
+        guard let monitor = ws.first else {
+            scheduleWindowStateSave("chrome-window-detected")
+            return
+        }
+        let monitorSlot = Int(String(monitor)) ?? 0
+        let activeSlotCount = activeMonitorSlotCount()
+        let targetMonitor = monitorSlot < activeSlotCount ? String(monitor) : "0"
+        if let target = firstEmptyOnMonitor(targetMonitor, skip: ws) {
+            log("Chrome window \(wid) alone on \(ws) -> \(target)")
+            sh(["move-node-to-workspace", "--window-id", "\(wid)", target])
+            sh(["workspace", target])
+        } else {
+            log("Chrome window \(wid) alone on \(ws): monitor \(targetMonitor) full, leaving in place")
+        }
         scheduleWindowStateSave("chrome-window-detected")
         return
     }
