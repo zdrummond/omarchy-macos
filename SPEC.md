@@ -45,7 +45,7 @@ Default slot-0 app assignments:
 | Workspace | App(s) |
 |---|---|
 | 01 | Mail workspace; Gmail Chrome app windows are not force-managed |
-| 02 (Msg) | Messages, Signal |
+| 02 (Msg) | Messages, Signal, Google Chat |
 | 03 | Spotify, Music |
 | 04 (Terms) | Ghostty, WezTerm, Warp, iTerm |
 | 05 (Editors) | Zed, VS Code, Antigravity |

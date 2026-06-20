@@ -58,6 +58,10 @@ actual="$(cat "$LOG_FILE")"
     if $source =~ /if\.app-name-regex-substring = '\''Gmail'\''/;
   die "unexpected Gmail canonical workspace assignment\n"
     if $source =~ /return "01" if \$app =~ \/Gmail\/i;/;
+  die "missing Google Chat window-detected assignment\n"
+    unless $source =~ /if\.app-name-regex-substring = '\''Google Chat'\''\nrun = \['\''move-node-to-workspace 02'\'', '\''workspace 02'\''\]/;
+  die "missing Google Chat canonical workspace assignment\n"
+    unless $source =~ /return "02" if \$app =~ \/Messages\|Signal\|Google Chat\/i;/;
 ' "$ROOT/install.sh"
 
 printf 'startup_restore_fake.sh: all checks passed\n'

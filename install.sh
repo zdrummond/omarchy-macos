@@ -970,6 +970,10 @@ if.app-name-regex-substring = 'Signal'
 run = ['move-node-to-workspace 02', 'workspace 02']
 
 [[on-window-detected]]
+if.app-name-regex-substring = 'Google Chat'
+run = ['move-node-to-workspace 02', 'workspace 02']
+
+[[on-window-detected]]
 if.app-name-regex-substring = 'Spotify|Music'
 run = ['move-node-to-workspace 03', 'workspace 03']
 
@@ -1250,7 +1254,7 @@ omarchy_assigned_workspace_for_app() {
   local bundle_id="$2"
 
   case "$app_name" in
-    *Messages*|*Signal*) printf '02\n'; return 0 ;;
+    *Messages*|*Signal*|*Google\ Chat*) printf '02\n'; return 0 ;;
     *Spotify*|*Music*) printf '03\n'; return 0 ;;
     *Ghostty*|*WezTerm*|*Warp*|*iTerm2*) printf '04\n'; return 0 ;;
     *Zed*|*Antigravity*) printf '05\n'; return 0 ;;
@@ -1630,7 +1634,7 @@ sub assigned_workspace {
     my $app = $window->{app_name} || "";
     my $bundle = $window->{app_bundle_id} || "";
 
-    return "02" if $app =~ /Messages|Signal/i;
+    return "02" if $app =~ /Messages|Signal|Google Chat/i;
     return "03" if $app =~ /Spotify|Music/i;
     return "04" if $app =~ /Ghostty|WezTerm|Warp|iTerm2/i;
     return "05" if $app =~ /Zed|Antigravity/i;
