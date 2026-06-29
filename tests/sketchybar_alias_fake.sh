@@ -91,7 +91,7 @@ case "$cmd" in
     printf '%s\n' "${format//%\{workspace\}/$workspace}"
     ;;
   list-windows)
-    format="%{workspace}|%{app-name}"
+    format="%{workspace}|%{app-name}|%{app-bundle-id}"
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --all) shift ;;
@@ -99,12 +99,19 @@ case "$cmd" in
         *) shift ;;
       esac
     done
-    for row in "02|Messages" "04|iTerm2"; do
+    for row in \
+      "02|Messages|com.apple.MobileSMS" \
+      "04|iTerm2|com.googlecode.iterm2" \
+      "04|Google Chrome|com.google.Chrome"
+    do
       workspace="${row%%|*}"
-      app="${row#*|}"
+      rest="${row#*|}"
+      app="${rest%%|*}"
+      bundle="${rest#*|}"
       out="$format"
       out="${out//%\{workspace\}/$workspace}"
       out="${out//%\{app-name\}/$app}"
+      out="${out//%\{app-bundle-id\}/$bundle}"
       printf '%s\n' "$out"
     done
     ;;
@@ -134,7 +141,8 @@ flattened="$(tr '\n' ' ' < "$LOG_FILE")"
 [[ "$flattened" == *"<space.0.2>"*"<label=Msg>"* ]]
 [[ "$flattened" == *"<space.0.1>"*"<label=Mail>"* ]]
 [[ "$flattened" == *"<space.0.3>"*"<label=Music>"* ]]
-[[ "$flattened" == *"<space.0.4>"*"<label=Terms>"* ]]
+[[ "$flattened" == *"<space.0.4>"*"<label=Terms, Google Chrome>"* ]]
+[[ "$flattened" != *"<space.0.4>"*"<label=Terms, iTerm2"* ]]
 [[ "$flattened" != *"<space.0.2>"*"<label=Messages>"* ]]
 [[ "$flattened" == *"<space.1.2>"*"<label=[empty]>"* ]]
 [[ "$flattened" != *"<space.1.2>"*"<label=Msg>"* ]]

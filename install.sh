@@ -1320,6 +1320,7 @@ omarchy_assigned_workspace_for_app() {
   local bundle_id="$2"
 
   case "$app_name" in
+    *Mail*) printf '01\n'; return 0 ;;
     *Messages*|*Signal*|*Google\ Chat*) printf '02\n'; return 0 ;;
     *Spotify*|*Music*) printf '03\n'; return 0 ;;
     *Ghostty*|*WezTerm*|*Warp*|*iTerm2*) printf '04\n'; return 0 ;;
@@ -3307,6 +3308,25 @@ space_alias_label() {
   ' "$ALIAS_FILE"
 }
 
+unexpected_apps_for_alias() {
+  local workspace="$1"
+  local rows="$2"
+  local legacy_workspace="${3:-}"
+
+  printf '%s\n' "$rows" |
+    while IFS='|' read -r row_workspace app_name bundle_id; do
+      [ "$row_workspace" = "$workspace" ] || { [ -n "$legacy_workspace" ] && [ "$row_workspace" = "$legacy_workspace" ]; } || continue
+      [ -n "$app_name" ] || continue
+      local assigned
+      assigned=$(omarchy_assigned_workspace_for_app "$app_name" "$bundle_id" 2>/dev/null || true)
+      [ "$assigned" = "$workspace" ] && continue
+      printf '%s\n' "$app_name"
+    done |
+    sort -u |
+    paste -sd "," - |
+    sed 's/,/, /g'
+}
+
 highlight_space() {
   local focused="$1"  # full workspace name, e.g. "23", or empty
   local focused_monitor focused_key
@@ -3337,7 +3357,7 @@ highlight_space() {
 
   # One aerospace call for all windows, grouped by workspace.
   local windows
-  windows=$(aerospace list-windows --all --format '%{workspace}|%{app-name}' 2>/dev/null) || {
+  windows=$(aerospace list-windows --all --format '%{workspace}|%{app-name}|%{app-bundle-id}' 2>/dev/null) || {
     sketchybar --set monitor.0 label="AS?" >/dev/null 2>&1 || true
     return 0
   }
@@ -3377,7 +3397,7 @@ highlight_space() {
     for KEY in 1 2 3 4 5 6 7 8 9 0; do
       local ws_name="${slot}${KEY}"
       local name="space.$slot.$KEY"
-      local label legacy_ws apps alias
+      local label legacy_ws apps alias unexpected_apps
       legacy_ws=""
       [ "$visible_ws" = "$KEY" ] && legacy_ws="$KEY"
       apps=$(printf '%s\n' "$windows" \
@@ -3385,7 +3405,12 @@ highlight_space() {
         | sort -u | paste -sd "," - | sed 's/,/, /g')
       alias=$(space_alias_label "$ws_name" 2>/dev/null || true)
       if [ -n "$alias" ]; then
-        label="$alias"
+        unexpected_apps=$(unexpected_apps_for_alias "$ws_name" "$windows" "$legacy_ws" 2>/dev/null || true)
+        if [ -n "$unexpected_apps" ]; then
+          label="$alias, $unexpected_apps"
+        else
+          label="$alias"
+        fi
       else
         label="$apps"
       fi

@@ -89,7 +89,7 @@ case "$cmd" in
     printf '%s\n' "${format//%\{workspace\}/$workspace}"
     ;;
   list-windows)
-    format="%{workspace}|%{app-name}"
+    format="%{workspace}|%{app-name}|%{app-bundle-id}"
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --all) shift ;;
@@ -97,12 +97,19 @@ case "$cmd" in
         *) shift ;;
       esac
     done
-    for row in "11|System Settings" "20|Notes" "04|iTerm2"; do
+    for row in \
+      "11|System Settings|com.apple.systempreferences" \
+      "20|Notes|com.apple.Notes" \
+      "04|iTerm2|com.googlecode.iterm2"
+    do
       workspace="${row%%|*}"
-      app="${row#*|}"
+      rest="${row#*|}"
+      app="${rest%%|*}"
+      bundle="${rest#*|}"
       out="$format"
       out="${out//%\{workspace\}/$workspace}"
       out="${out//%\{app-name\}/$app}"
+      out="${out//%\{app-bundle-id\}/$bundle}"
       printf '%s\n' "$out"
     done
     ;;
