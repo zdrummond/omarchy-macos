@@ -8,9 +8,12 @@ Bring the [Omarchy](https://omarchy.org/) / Hyprland Linux tiling workflow to ma
 
 - **Option (⌥) = SUPER.** Every shortcut mirrors Hyprland's SUPER key with ⌥ as a 1:1 substitute.
 - **Vim-style navigation everywhere.** h/j/k/l for focus, movement, and resize.
-- **Catppuccin Mocha color scheme.** Matches Omarchy's default theme (mauve accent for active window borders, base for the bar background).
+- **Catppuccin Mocha color scheme.** Matches Omarchy's default theme (mauve accent for optional active window borders, base for the bar background).
 - **Zero visual clutter.** Disable macOS window animations, uniform 8px gaps, no Dock reliance.
-- **Single idempotent install script.** `./install.sh install` sets everything up from scratch; `./install.sh revert` fully undoes it and restores prior configs from backup.
+- **Single idempotent command wrapper.** `./omarchy.sh install` sets everything
+  up from scratch; `./omarchy.sh revert` fully undoes it and restores prior
+  configs from backup. `./install.sh` remains as a compatibility entry point
+  and takes no action when run without a subcommand.
 
 ## Tool Stack
 
@@ -19,49 +22,130 @@ Bring the [Omarchy](https://omarchy.org/) / Hyprland Linux tiling workflow to ma
 | [AeroSpace](https://github.com/nikitabobko/AeroSpace) | Hyprland | i3-style tiling window manager |
 | [skhd](https://github.com/koekeishiya/skhd) | Hyprland `bind` (app launchers) | Global hotkey daemon |
 | [SketchyBar](https://github.com/FelixKratz/SketchyBar) | Waybar | Scriptable status bar |
-| [JankyBorders](https://github.com/FelixKratz/JankyBorders) | Hyprland border config | Colored border on focused window |
+| [JankyBorders](https://github.com/FelixKratz/JankyBorders) | Hyprland border config | Optional colored border on focused window |
 | Raycast | walker/rofi | App launcher (⌥+Space) |
 
 ## Workspace Layout
 
-Workspaces 1–10 with automatic app assignment:
+Workspaces are monitor-scoped. Workspace names are two digits: `<monitor-slot><key>`.
+The built-in display is slot `0` when present; external displays follow in AeroSpace's
+monitor order. The number-row shortcuts resolve against the monitor under the
+mouse, falling back to AeroSpace's focused monitor only when the mouse monitor
+cannot be read. So `⌥+3` with the pointer on the built-in display goes to `03`,
+while `⌥+3` with the pointer on the first external display goes to `13`. The `0`
+key is the tenth workspace, so it maps to `00`, `10`, etc. AeroSpace force
+assignments are generated from the displays attached during install/refresh:
+`10`-`19` are pinned to the first external display, `20`-`29` to the second,
+and `30`-`39` only when a third external display is actually attached. Missing
+external slots are not forced to the built-in display. Slot-0 workspaces are
+intentionally left unforced so the built-in display keeps its current visible
+workspace while an external display changes spaces. After an external-slot
+switch, the helper restores the previously visible workspace on the other
+monitors, then returns focus to the target external monitor and centers the
+mouse on that monitor so the next number-row shortcut continues resolving
+against the same external slot.
+
+Default slot-0 app assignments:
 
 | Workspace | App(s) |
 |---|---|
-| 1 | Gmail (Chrome window) |
-| 2 | Messages, Signal |
-| 3 | Spotify, Music |
-| 4 | Ghostty, WezTerm, Warp, iTerm |
-| 5 | Zed, VS Code, Antigravity |
-| 6 | Claude desktop |
-| 9 | Steam |
+| 01 | Mail workspace; Gmail Chrome app windows are not force-managed |
+| 02 (Msg) | Messages, Signal, Google Chat |
+| 03 | Spotify, Music |
+| 04 (Terms) | Ghostty, WezTerm, Warp, iTerm |
+| 05 (Editors) | Zed, VS Code, Antigravity |
+| 06 (Agents) | Claude desktop, Gemini, ChatGPT |
+| 00 | Steam |
+| current workspace | Apps without an explicit rule or restored saved location |
 
 ## Key Behaviors
 
-- **Focus follows mouse** (lazy center on window focus change)
-- **SketchyBar** shows active workspace highlighted in blue with open app names; inactive workspaces with apps shown in mauve; empty workspaces dimmed
-- **Bar visibility is press-to-peek.** SketchyBar starts hidden and only appears while Option (⌥) is held for ≥150ms — mirroring Hyprland's "bar on SUPER" feel and keeping the screen chrome-free the rest of the time.
+- **Focus changes do not warp the pointer.** Browser links and buttons must
+  receive clicks at the user's chosen cursor position.
+- **Exact reboot restore** is snapshot-based. `./omarchy.sh save-window-state`
+  captures the current AeroSpace window list, including window id, workspace,
+  app name, app bundle id, and title, to
+  `~/.config/aerospace/omarchy_window_state.json`. A LaunchAgent refreshes that
+  single snapshot every 15 minutes and performs one best-effort save when macOS
+  logs out or shuts down. On login/startup, `startup_restore.sh` blocks all
+  automatic saves before its first repair pass, waits for AeroSpace, repairs
+  detached-monitor workspaces, then replays the saved layout with a bounded
+  startup retry window. Matching prefers app identity and title before falling
+  back to app identity where that is unambiguous. Startup restore does not write
+  a post-restore snapshot, so login-time app creation and rule-based placement
+  cannot replace the pre-reboot state. Manual saves clear incomplete-restore
+  state after the user accepts the current layout.
+- **Workspace repair** migrates windows from detached monitor-prefixed workspaces back to slot `0`, migrates visible legacy single-digit workspaces like `2` to the active monitor's slot-prefixed workspace like `12`, and repins any visible two-digit workspace that is shown on the wrong monitor.
+- **SketchyBar** creates separate space items per monitor slot and scopes them
+  to each SketchyBar display. Each bar shows only that monitor's workspace set;
+  active workspaces are highlighted in blue, inactive workspaces with apps are
+  mauve, and empty workspaces are dimmed. Workspace aliases are display-specific:
+  slot `0` gets the named labels (`Mail`, `Msg`, `Music`, `Terms`, `Editors`,
+  `Agents`) while external displays use numeric/app labels. SketchyBar display
+  ids are resolved separately from AeroSpace monitor ids so dynamic multi-monitor
+  topologies can be represented correctly.
+- **Bar visibility defaults off.** SketchyBar starts hidden and toggles with `⌥ + Z`; `⌥+1-0` workspace switches and `⌥+Tab` hide it again. Press-to-peek is disabled because the modifier polling/repaint path can make SketchyBar unresponsive on multi-monitor setups.
+- **Status alert indicator** temporarily shows SketchyBar with
+  `Restoring windows` during startup restore, then hides the indicator and
+  restores the previous bar visibility when restore completes. If restore is
+  incomplete, the bar remains visible with `Restore incomplete` until the user
+  performs a manual save or the next successful restore clears the marker. When
+  no restore is active, the same alert item shows `AX: ...` if Omarchy can
+  observe that a component's macOS Accessibility grant is stale. The same
+  diagnosis is available from `./omarchy.sh accessibility`. Because macOS does
+  not expose arbitrary processes' Accessibility trust to shell scripts, the
+  report uses component health signals such as Chrome rehome's
+  `AXIsProcessTrusted` log and AeroSpace's ability to list windows;
+  unverifiable components are reported as unknown instead of as false failures.
+  The alert is normally event-driven; while an Accessibility warning is visible,
+  a single temporary watcher checks every 30 seconds and exits once the warning
+  clears.
+- **Window discovery** includes `⌥+Up` for a readable all-window picker,
+  `⌥+Shift+Up` for Mission Control / expose, plus `⌥+Ctrl+Tab` and
+  `⌥+Ctrl+Shift+Tab` to cycle through every AeroSpace-managed window across
+  workspaces.
+- **Unassigned windows stay where they open** so browser popups, compose
+  windows, and transient dialogs are not moved by a global catch-all rule.
+- **1Password dialogs** are floated so authentication prompts stay usable on
+  the current workspace.
 - **Front app label** in bar shows `<workspace> <app name>`
 - **Right-side bar** has wifi SSID, battery level with color-coded icons, and clock
-- **JankyBorders** draws a 3px mauve border on the focused window, surface0 on all others
+- **Optional JankyBorders** draws a 3px mauve border on the focused window, surface0 on all others when `OMARCHY_ENABLE_BORDERS=1` is set during install/refresh
 - **Normalization** flattens nested containers and corrects opposite orientations automatically
-
-## Bar Toggle Daemon (`bar_toggle`)
-
-A tiny Swift binary compiled at install time and loaded as a LaunchAgent. It exists to solve two problems that can't be handled in SketchyBar or aerospace config alone:
-
-1. **Press-to-peek visibility.** Neither SketchyBar nor skhd can react to a modifier being held. The daemon polls `CGEventSource.flagsState` every 50ms, and after Option has been held for 150ms it runs `sketchybar --bar hidden=off`. On release it immediately hides the bar again. The 150ms debounce keeps the bar from flashing during quick `⌥+key` combos (e.g. `⌥+1` to switch workspace).
-2. **Stale-highlight workaround.** SketchyBar has a known quirk where `--set` against a hidden item updates its data model but never repaints its background/border — so by the time the bar un-hides, the "focused space" highlight is whatever it was the last time the bar was visible. To force a fresh repaint, the daemon fires `sketchybar --trigger front_app_switched` right after un-hiding. The `front_app` plugin re-runs while the bar is actually visible, calls `highlight_space` with the current aerospace workspace, and the drawing-toggle workaround in `spaces.sh` then paints correctly.
-
-The daemon is implemented in Swift (not Python) so it has zero runtime dependencies beyond Xcode Command Line Tools, which are already a Homebrew prerequisite. Source lives at `~/.config/sketchybar/plugins/bar_toggle.swift`; the compiled binary at `~/.config/sketchybar/plugins/bar_toggle`; the LaunchAgent at `~/Library/LaunchAgents/com.omarchy-macos.bar_toggle.plist`.
+- **Responsive layout guard** changes a crowded focused workspace to AeroSpace
+  accordion layout when the estimated split width would fall below 640 points
+  per window. This keeps laptop-width displays usable once a workspace grows
+  beyond two or three tiled windows.
+- **Chrome new-window rehome** uses an Accessibility-trusted LaunchAgent to
+  watch ordinary Chrome window creation on the built-in monitor slot only.
+  External monitor slots are left alone because those larger displays commonly
+  use mixed-app spaces intentionally. On slot `0`, if the current workspace
+  already contains ordinary Chrome, the new window stays there. Otherwise, it
+  should move to an existing ordinary Chrome workspace on the built-in monitor
+  when one exists. If no Chrome workspace exists on slot `0`, it may move to
+  the first empty general-purpose workspace. Reserved/named workspaces are not
+  candidates merely because they are empty: Mail/Msg/Music/Terms/Editors/
+  Agents/Steam map to `01`, `02`, `03`, `04`, `05`, `06`, and `00`. After any
+  decision, the updated layout is recorded.
 
 ## Installer Behavior
 
 - Backs up all existing configs (aerospace, skhd, sketchybar, borders) before writing
 - Writes all config files inline from the script (no external dotfiles repo required)
 - Disables macOS window animations (`NSAutomaticWindowAnimationsEnabled`, `NSWindowResizeTime`)
-- Starts all four services via `brew services`
-- Compiles the `bar_toggle` Swift daemon via `swiftc` and loads it as a LaunchAgent
+- Starts the core services via `brew services`; JankyBorders is installed, configured, and started only when `OMARCHY_ENABLE_BORDERS=1`
+- Keeps SketchyBar hidden by default, binds `⌥ + Z` to an explicit toggle,
+  hides the bar after workspace switches, adds a temporary restore-status item
+  for startup restore, and unloads the old `bar_toggle` LaunchAgent if present
+- Writes a dependency-light Perl window-state helper using macOS's system Perl and `JSON::PP`; no extra package is required for saved reboot restore
+- Regenerates `~/Desktop/omarchy-shortcuts.png` and runs a click-through
+  desktop-level shortcut cheatsheet widget during install/refresh and via
+  `./omarchy.sh shortcuts-widget`
+- Loads a window-state saver LaunchAgent that saves every 15 minutes and traps launchd termination for best-effort logout/shutdown saves
+- Loads an AeroSpace login LaunchAgent and the Accessibility-backed Chrome
+  rehome LaunchAgent
+- Writes `~/.config/aerospace/accessibility_report.sh` and wires it to a
+  SketchyBar warning item for stale Accessibility permissions
 - Leaves an install marker at `~/.omarchy-macos-backup/.installed` to prevent duplicate installs
 - `revert` stops services, unloads the LaunchAgent, removes configs, restores backups, uninstalls packages
 

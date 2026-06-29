@@ -59,9 +59,13 @@ sections = [
         ("⌥ ⇧ 1–9", "Move window to workspace"),
         ("⌥ Tab", "Last workspace"),
         ("⌥ ⇧ Tab", "Workspace → next monitor"),
+        ("⌥ ⌃ Tab", "Next window"),
+        ("⌥ ⌃ ⇧ Tab", "Previous window"),
     ]),
     ("Focus", BLUE, [
         ("⌥ H J K L", "Focus left/down/up/right"),
+        ("⌥ ↑", "Window picker"),
+        ("⌥ ⇧ ↑", "Mission Control"),
     ]),
     ("Move", GREEN, [
         ("⌥ ⇧ H J K L", "Move window"),
@@ -75,6 +79,7 @@ sections = [
         ("⌥ F", "Fullscreen"),
         ("⌥ E", "Toggle split direction"),
         ("⌥ S", "Accordion (stacked)"),
+        ("auto", "Accordion when narrow"),
         ("⌥ ⇧ Space", "Float / tile toggle"),
         ("⌥ ⇧ Q", "Close window"),
     ]),

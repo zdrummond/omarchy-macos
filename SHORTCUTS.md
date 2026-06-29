@@ -4,12 +4,19 @@ All shortcuts use **Option (⌥)** as the modifier key, mirroring the SUPER key 
 
 ## Workspaces
 
+Workspace shortcuts resolve against the monitor under the mouse, falling back to
+the focused monitor. The built-in display uses slot `0`; external displays use
+slots `1`, `2`, and `3` when attached. For example, `⌥+7` targets `07` on the
+built-in display and `17` on the first external display.
+
 | Shortcut | Action |
 |----------|--------|
-| ⌥ + 1–0 | Switch to workspace 1–10 |
-| ⌥ + Shift + 1–0 | Move focused window to workspace 1–10 |
+| ⌥ + 1–0 | Switch to workspace 1–10 on the current monitor |
+| ⌥ + Shift + 1–0 | Move focused window to workspace 1–10 on the current monitor |
 | ⌥ + Tab | Toggle back and forth between last workspace |
 | ⌥ + Shift + Tab | Move workspace to next monitor |
+| ⌥ + Ctrl + Tab | Focus next window across all workspaces |
+| ⌥ + Ctrl + Shift + Tab | Focus previous window across all workspaces |
 
 ## Window Focus
 
@@ -19,6 +26,13 @@ All shortcuts use **Option (⌥)** as the modifier key, mirroring the SUPER key 
 | ⌥ + J | Focus window down |
 | ⌥ + K | Focus window up |
 | ⌥ + L | Focus window right |
+
+## Window Overview
+
+| Shortcut | Action |
+|----------|--------|
+| ⌥ + Up | Readable all-window picker |
+| ⌥ + Shift + Up | Mission Control / expose |
 
 ## Window Movement
 
@@ -50,6 +64,9 @@ All shortcuts use **Option (⌥)** as the modifier key, mirroring the SUPER key 
 | ⌥ + Shift + Space | Toggle floating/tiling |
 | ⌥ + Shift + Q | Close focused window |
 
+Crowded workspaces automatically switch to accordion layout when the estimated
+split width falls below 640 points per window.
+
 ## App Launchers (skhd)
 
 | Shortcut | Action |
@@ -76,6 +93,23 @@ All shortcuts use **Option (⌥)** as the modifier key, mirroring the SUPER key 
 |----------|--------|
 | ⌥ + Shift + R | Reload Aerospace config |
 | ⌥ + Shift + C | Reload skhd config |
+
+## Diagnostics
+
+Secure Input can prevent AeroSpace and skhd from receiving global keyboard
+events. Use a terminal for this diagnostic because a shortcut may not fire while
+Secure Input is active.
+
+```sh
+./install.sh secure-input
+./install.sh secure-input --watch
+```
+
+## Bar
+
+| Shortcut | Action |
+|----------|--------|
+| ⌥ + Z | Toggle SketchyBar |
 
 ## Launcher
 

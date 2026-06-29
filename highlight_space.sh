@@ -1,21 +1,43 @@
 #!/usr/bin/env bash
+# Manually paint the space highlight on sketchybar. Workspace names follow
+# the per-monitor scheme: "${display_slot}${key}" (e.g. "03", "23").
+#
 # Usage:
-#   highlight_space.sh <0-9>   # highlight that space
+#   highlight_space.sh <NN>    # highlight workspace NN directly (e.g. 03, 23)
+#   highlight_space.sh <N>     # highlight key N on the currently focused monitor
 #   highlight_space.sh clear   # clear all highlights
 
-if [ -z "$1" ]; then
+set -euo pipefail
+
+if [ -z "${1:-}" ]; then
   echo "Usage:"
-  echo "  highlight_space.sh <0-9>   # highlight that space"
+  echo "  highlight_space.sh <NN>    # highlight workspace NN directly (e.g. 03, 23)"
+  echo "  highlight_space.sh <N>     # highlight key N on the currently focused monitor"
   echo "  highlight_space.sh clear   # clear all highlights"
   exit 1
 fi
 
 export CONFIG_DIR="$HOME/.config/sketchybar"
+source "$HOME/.config/aerospace/omarchy_space_state.sh"
 source "$CONFIG_DIR/plugins/spaces.sh"
 
 arg="$1"
-if [ "$arg" = "clear" ]; then
-  highlight_space ""
-else
-  highlight_space "$arg"
-fi
+case "$arg" in
+  clear)
+    highlight_space ""
+    ;;
+  [0-9][0-9])
+    highlight_space "$arg"
+    ;;
+  [0-9])
+    target=$(omarchy_workspace_for_key "$arg") || {
+      echo "highlight_space.sh: AeroSpace is not reachable" >&2
+      exit 1
+    }
+    highlight_space "$target"
+    ;;
+  *)
+    echo "highlight_space.sh: invalid arg '$arg' (expected NN, N, or 'clear')" >&2
+    exit 1
+    ;;
+esac
