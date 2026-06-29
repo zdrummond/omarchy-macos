@@ -30,8 +30,14 @@ chmod +x "$CONFIG_DIR/plugins/restore_status.sh"
 
 /usr/bin/perl -0777 -e '
   my $source = <>;
-  die "restore status should not poll with update_freq\n" if $source =~ /update_freq=5/;
-  die "restore status item should disable polling updates\n" unless $source =~ /cat > "\$SKETCHY_DIR\/items\/restore_status\.sh".*?updates=off/s;
+  die "restore status should not poll too aggressively\n" if $source =~ /update_freq=5/;
+  die "restore status item should not poll continuously\n"
+    unless $source =~ /cat > "\$SKETCHY_DIR\/items\/restore_status\.sh".*?updates=off/s;
+  die "monitor restore status items should not each poll independently\n"
+    unless $source =~ /name="restore_status\.\$slot".*?updates=off/s;
+  die "missing temporary AX warning watcher\n"
+    unless $source =~ /start_accessibility_watch/ &&
+           $source =~ /OMARCHY_RESTORE_STATUS_WATCH_INTERVAL:-30/;
 ' "$ROOT/install.sh"
 
 cat > "$FAKE_BIN/sketchybar" <<'EOF'

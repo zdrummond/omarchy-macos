@@ -10,7 +10,10 @@ Bring the [Omarchy](https://omarchy.org/) / Hyprland Linux tiling workflow to ma
 - **Vim-style navigation everywhere.** h/j/k/l for focus, movement, and resize.
 - **Catppuccin Mocha color scheme.** Matches Omarchy's default theme (mauve accent for optional active window borders, base for the bar background).
 - **Zero visual clutter.** Disable macOS window animations, uniform 8px gaps, no Dock reliance.
-- **Single idempotent install script.** `./install.sh install` sets everything up from scratch; `./install.sh revert` fully undoes it and restores prior configs from backup.
+- **Single idempotent command wrapper.** `./omarchy.sh install` sets everything
+  up from scratch; `./omarchy.sh revert` fully undoes it and restores prior
+  configs from backup. `./install.sh` remains as a compatibility entry point
+  and takes no action when run without a subcommand.
 
 ## Tool Stack
 
@@ -59,7 +62,7 @@ Default slot-0 app assignments:
 
 - **Focus changes do not warp the pointer.** Browser links and buttons must
   receive clicks at the user's chosen cursor position.
-- **Exact reboot restore** is snapshot-based. `./install.sh save-window-state`
+- **Exact reboot restore** is snapshot-based. `./omarchy.sh save-window-state`
   captures the current AeroSpace window list, including window id, workspace,
   app name, app bundle id, and title, to
   `~/.config/aerospace/omarchy_window_state.json`. A LaunchAgent refreshes that
@@ -82,12 +85,21 @@ Default slot-0 app assignments:
   ids are resolved separately from AeroSpace monitor ids so dynamic multi-monitor
   topologies can be represented correctly.
 - **Bar visibility defaults off.** SketchyBar starts hidden and toggles with `⌥ + Z`; `⌥+1-0` workspace switches and `⌥+Tab` hide it again. Press-to-peek is disabled because the modifier polling/repaint path can make SketchyBar unresponsive on multi-monitor setups.
-- **Restore status indicator** temporarily shows SketchyBar during startup
-  restore with `Restoring windows`, then hides the indicator and restores the
-  previous bar visibility when restore completes. If restore is incomplete, the
-  bar remains visible with `Restore incomplete` until the user performs a manual
-  save or the next successful restore clears the marker. The status item is
-  event-driven, not polled, to avoid blinking during long startup restores.
+- **Status alert indicator** temporarily shows SketchyBar with
+  `Restoring windows` during startup restore, then hides the indicator and
+  restores the previous bar visibility when restore completes. If restore is
+  incomplete, the bar remains visible with `Restore incomplete` until the user
+  performs a manual save or the next successful restore clears the marker. When
+  no restore is active, the same alert item shows `AX: ...` if Omarchy can
+  observe that a component's macOS Accessibility grant is stale. The same
+  diagnosis is available from `./omarchy.sh accessibility`. Because macOS does
+  not expose arbitrary processes' Accessibility trust to shell scripts, the
+  report uses component health signals such as Chrome rehome's
+  `AXIsProcessTrusted` log and AeroSpace's ability to list windows;
+  unverifiable components are reported as unknown instead of as false failures.
+  The alert is normally event-driven; while an Accessibility warning is visible,
+  a single temporary watcher checks every 30 seconds and exits once the warning
+  clears.
 - **Window discovery** includes `⌥+Up` for a readable all-window picker,
   `⌥+Shift+Up` for Mission Control / expose, plus `⌥+Ctrl+Tab` and
   `⌥+Ctrl+Shift+Tab` to cycle through every AeroSpace-managed window across
@@ -105,9 +117,16 @@ Default slot-0 app assignments:
   per window. This keeps laptop-width displays usable once a workspace grows
   beyond two or three tiled windows.
 - **Chrome new-window rehome** uses an Accessibility-trusted LaunchAgent to
-  watch ordinary Chrome window creation, moves a new window to the first empty
-  workspace on its monitor when the current workspace does not already contain
-  Chrome, then records the updated layout.
+  watch ordinary Chrome window creation on the built-in monitor slot only.
+  External monitor slots are left alone because those larger displays commonly
+  use mixed-app spaces intentionally. On slot `0`, if the current workspace
+  already contains ordinary Chrome, the new window stays there. Otherwise, it
+  should move to an existing ordinary Chrome workspace on the built-in monitor
+  when one exists. If no Chrome workspace exists on slot `0`, it may move to
+  the first empty general-purpose workspace. Reserved/named workspaces are not
+  candidates merely because they are empty: Mail/Msg/Music/Terms/Editors/
+  Agents/Steam map to `01`, `02`, `03`, `04`, `05`, `06`, and `00`. After any
+  decision, the updated layout is recorded.
 
 ## Installer Behavior
 
@@ -121,10 +140,12 @@ Default slot-0 app assignments:
 - Writes a dependency-light Perl window-state helper using macOS's system Perl and `JSON::PP`; no extra package is required for saved reboot restore
 - Regenerates `~/Desktop/omarchy-shortcuts.png` and runs a click-through
   desktop-level shortcut cheatsheet widget during install/refresh and via
-  `./install.sh shortcuts-widget`
+  `./omarchy.sh shortcuts-widget`
 - Loads a window-state saver LaunchAgent that saves every 15 minutes and traps launchd termination for best-effort logout/shutdown saves
 - Loads an AeroSpace login LaunchAgent and the Accessibility-backed Chrome
   rehome LaunchAgent
+- Writes `~/.config/aerospace/accessibility_report.sh` and wires it to a
+  SketchyBar warning item for stale Accessibility permissions
 - Leaves an install marker at `~/.omarchy-macos-backup/.installed` to prevent duplicate installs
 - `revert` stops services, unloads the LaunchAgent, removes configs, restores backups, uninstalls packages
 

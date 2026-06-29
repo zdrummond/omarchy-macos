@@ -3,13 +3,14 @@
 # omarchy-macos — Hyprland/Omarchy-style window management for macOS M1
 #
 # Usage:
-#   ./install.sh install   — install and configure everything
-#   ./install.sh refresh   — rewrite generated configs without reinstalling brew packages
-#   ./install.sh save-window-state — save current window/workspace layout
-#   ./install.sh restore-window-state — replay saved window/workspace layout
-#   ./install.sh secure-input [--watch] — diagnose macOS Secure Input owner
-#   ./install.sh revert    — undo everything, restore previous state
-#   ./install.sh status    — show what's installed and running
+#   ./omarchy.sh install   — install and configure everything
+#   ./omarchy.sh refresh   — rewrite generated configs without reinstalling brew packages
+#   ./omarchy.sh save-window-state — save current window/workspace layout
+#   ./omarchy.sh restore-window-state — replay saved window/workspace layout
+#   ./omarchy.sh secure-input [--watch] — diagnose macOS Secure Input owner
+#   ./omarchy.sh accessibility — diagnose Accessibility permissions
+#   ./omarchy.sh revert    — undo everything, restore previous state
+#   ./omarchy.sh status    — show what's installed and running
 #
 # Tools installed:
 #   aerospace    — tiling window manager (i3-style)
@@ -50,6 +51,7 @@ AEROSPACE_START_PLIST="$HOME/Library/LaunchAgents/$AEROSPACE_START_LABEL.plist"
 WINDOW_PICKER_SRC="$AEROSPACE_DIR/window_picker.swift"
 WINDOW_PICKER_BIN="$AEROSPACE_DIR/window_picker"
 SECURE_INPUT_HELPER="$AEROSPACE_DIR/secure_input_report.sh"
+ACCESSIBILITY_REPORT_HELPER="$AEROSPACE_DIR/accessibility_report.sh"
 
 CHROME_REHOME_SRC="$SKETCHY_DIR/plugins/chrome_rehome.swift"
 CHROME_REHOME_LABEL="com.omarchy-macos.chrome_rehome"
@@ -117,6 +119,7 @@ cmd_install() {
   write_window_cycle_helper
   write_window_picker_helper
   write_secure_input_helper
+  write_accessibility_report_helper
   write_aerospace_start_agent
   write_skhd_config
   write_sketchybar_config
@@ -175,6 +178,7 @@ cmd_refresh() {
   write_window_cycle_helper
   write_window_picker_helper
   write_secure_input_helper
+  write_accessibility_report_helper
   write_aerospace_start_agent
   write_skhd_config
   write_sketchybar_config
@@ -248,6 +252,12 @@ cmd_secure_input() {
   header "omarchy-macos secure input"
   write_secure_input_helper >/dev/null
   "$SECURE_INPUT_HELPER" "${@:2}"
+}
+
+cmd_accessibility() {
+  header "omarchy-macos accessibility"
+  write_accessibility_report_helper >/dev/null
+  "$ACCESSIBILITY_REPORT_HELPER" "${@:2}"
 }
 
 write_shortcut_desktop_widget() {
@@ -500,13 +510,16 @@ cmd_status() {
   check_launch_agent "$SHORTCUT_WIDGET_LABEL"
 
   echo ""
+  if [[ -x "$ACCESSIBILITY_REPORT_HELPER" ]]; then
+    "$ACCESSIBILITY_REPORT_HELPER" || true
+  else
+    warn "Accessibility helper missing — run './install.sh refresh'"
+  fi
+  echo ""
   if aerospace list-monitors --format '%{monitor-id}' >/dev/null 2>&1; then
     success "AeroSpace server reachable"
   else
     warn "AeroSpace server is not reachable — window restore and workspace moves will fail"
-  fi
-  if [[ -f /tmp/chrome_rehome.log ]] && awk '/AXIsProcessTrusted/ { last=$0 } END { exit(last ~ /false/ ? 0 : 1) }' /tmp/chrome_rehome.log 2>/dev/null; then
-    warn "chrome_rehome is not Accessibility-trusted — grant Omarchy Chrome Rehome in Privacy & Security → Accessibility"
   fi
   check_window_state
   if [[ -x "$SECURE_INPUT_HELPER" ]]; then
@@ -672,6 +685,10 @@ start_services() {
   brew services start felixkratz/formulae/sketchybar 2>/dev/null || \
     brew services start sketchybar 2>/dev/null || \
     warn "Could not auto-start sketchybar"
+  if command -v sketchybar >/dev/null 2>&1; then
+    CONFIG_DIR="$SKETCHY_DIR" sketchybar --reload >/dev/null 2>&1 || true
+    "$SKETCHY_DIR/plugins/restore_status.sh" refresh >/dev/null 2>&1 || true
+  fi
 
   if borders_enabled; then
     info "Starting borders..."
@@ -2941,6 +2958,179 @@ SECURE_INPUT_EOF
 }
 
 # =============================================================================
+# ACCESSIBILITY HELPER
+# Reports Omarchy components whose macOS Accessibility permission appears stale.
+# macOS does not expose a public API for checking another process's trust
+# directly, so this uses each component's observable health signal.
+# =============================================================================
+write_accessibility_report_helper() {
+  info "Writing accessibility helper..."
+  mkdir -p "$AEROSPACE_DIR"
+
+  cat > "$ACCESSIBILITY_REPORT_HELPER" << 'ACCESSIBILITY_REPORT_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+CHROME_REHOME_LABEL="${OMARCHY_CHROME_REHOME_LABEL:-com.omarchy-macos.chrome_rehome}"
+CHROME_REHOME_LOG="${OMARCHY_CHROME_REHOME_LOG:-/tmp/chrome_rehome.log}"
+
+ISSUES=""
+OKS=""
+UNKNOWNS=""
+
+append_line() {
+  local current="$1" line="$2"
+  if [ -n "$current" ]; then
+    printf '%s\n%s\n' "$current" "$line"
+  else
+    printf '%s\n' "$line"
+  fi
+}
+
+add_issue() {
+  ISSUES="$(append_line "$ISSUES" "$1|$2")"
+}
+
+add_ok() {
+  OKS="$(append_line "$OKS" "$1|$2")"
+}
+
+add_unknown() {
+  UNKNOWNS="$(append_line "$UNKNOWNS" "$1|$2")"
+}
+
+launch_agent_loaded() {
+  local label="$1"
+  launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1
+}
+
+last_chrome_ax_line() {
+  [ -f "$CHROME_REHOME_LOG" ] || return 1
+  awk '/AXIsProcessTrusted/ { last=$0 } END { if (last != "") print last; else exit 1 }' "$CHROME_REHOME_LOG" 2>/dev/null
+}
+
+check_chrome_rehome() {
+  local last_ax
+  if ! launch_agent_loaded "$CHROME_REHOME_LABEL"; then
+    add_unknown "Omarchy Chrome Rehome" "LaunchAgent is not loaded, so Accessibility trust cannot be checked."
+    return 0
+  fi
+
+  last_ax="$(last_chrome_ax_line || true)"
+  case "$last_ax" in
+    *"AXIsProcessTrusted: false"*)
+      add_issue "Omarchy Chrome Rehome" "Last chrome_rehome log says AXIsProcessTrusted: false. Re-grant Omarchy Chrome Rehome in Privacy & Security > Accessibility."
+      ;;
+    *"AXIsProcessTrusted: true"*)
+      add_ok "Omarchy Chrome Rehome" "Last chrome_rehome log says AXIsProcessTrusted: true."
+      ;;
+    "")
+      add_unknown "Omarchy Chrome Rehome" "No AXIsProcessTrusted line found in $CHROME_REHOME_LOG yet."
+      ;;
+    *)
+      add_unknown "Omarchy Chrome Rehome" "Could not interpret last Accessibility log line: $last_ax"
+      ;;
+  esac
+}
+
+check_aerospace() {
+  if ! command -v aerospace >/dev/null 2>&1; then
+    add_unknown "AeroSpace" "aerospace command is not installed or not on PATH."
+    return 0
+  fi
+
+  if aerospace list-windows --all --format '%{window-id}' >/dev/null 2>&1; then
+    add_ok "AeroSpace" "AeroSpace can list windows."
+  elif aerospace list-monitors --format '%{monitor-id}' >/dev/null 2>&1; then
+    add_issue "AeroSpace" "AeroSpace is reachable but cannot list windows. Re-grant AeroSpace in Privacy & Security > Accessibility."
+  else
+    add_unknown "AeroSpace" "AeroSpace server is not reachable, so Accessibility trust cannot be checked."
+  fi
+}
+
+check_skhd() {
+  if launch_agent_loaded "com.koekeishiya.skhd" || launch_agent_loaded "homebrew.mxcl.skhd"; then
+    add_unknown "skhd" "Service is loaded; macOS does not expose skhd Accessibility trust to this shell report."
+  else
+    add_unknown "skhd" "Service is not loaded, so Accessibility trust cannot be checked."
+  fi
+}
+
+brief_issues() {
+  printf '%s\n' "$ISSUES" |
+    awk -F'|' 'NF { names = names ? names ", " $1 : $1 } END { print names }'
+}
+
+issue_count() {
+  printf '%s\n' "$ISSUES" | awk 'NF { count++ } END { print count + 0 }'
+}
+
+print_section() {
+  local title="$1" rows="$2"
+  [ -n "$rows" ] || return 0
+  printf '%s\n' "$title"
+  printf '%s\n' "$rows" |
+    while IFS='|' read -r name detail; do
+      [ -n "$name" ] || continue
+      printf '  %s - %s\n' "$name" "$detail"
+    done
+  printf '\n'
+}
+
+run_checks() {
+  check_chrome_rehome
+  check_aerospace
+  check_skhd
+}
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  accessibility_report.sh          show Accessibility health report
+  accessibility_report.sh --brief  print only actionable components
+  accessibility_report.sh --count  print actionable issue count
+
+"Needs redo" means the component has an observable failure consistent with a
+stale macOS Accessibility grant. Unknown means macOS or the component does not
+provide enough non-interactive signal to call it either healthy or stale.
+USAGE
+}
+
+run_checks
+
+case "${1:-}" in
+  --brief)
+    brief_issues
+    [ "$(issue_count)" -eq 0 ]
+    ;;
+  --count)
+    issue_count
+    ;;
+  --help|-h)
+    usage
+    ;;
+  "")
+    if [ "$(issue_count)" -gt 0 ]; then
+      print_section "Needs Accessibility redo:" "$ISSUES"
+    else
+      printf 'No actionable Accessibility redo detected.\n\n'
+    fi
+    print_section "Healthy:" "$OKS"
+    print_section "Unknown / manual check:" "$UNKNOWNS"
+    ;;
+  *)
+    echo "accessibility_report.sh: unknown argument '$1'" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
+ACCESSIBILITY_REPORT_EOF
+
+  chmod +x "$ACCESSIBILITY_REPORT_HELPER"
+  success "accessibility helper written to $ACCESSIBILITY_REPORT_HELPER"
+}
+
+# =============================================================================
 # AEROSPACE LOGIN STARTER
 # Starts AeroSpace at login without hiding/suspending the app. AeroSpace's own
 # start-at-login setting is still enabled, but this gives the generated setup an
@@ -3056,6 +3246,7 @@ SKHD_EOF
 write_sketchybar_config() {
   info "Writing SketchyBar config..."
   mkdir -p "$SKETCHY_DIR/plugins" "$SKETCHY_DIR/items"
+  rm -f "$SKETCHY_DIR/items/accessibility_status.sh" "$SKETCHY_DIR/plugins/accessibility_status.sh"
 
   # ── Main bar config ──────────────────────────────────────────────────────
   cat > "$SKETCHY_DIR/sketchybarrc" << 'SKETCHY_EOF'
@@ -3065,6 +3256,7 @@ write_sketchybar_config() {
 # Catppuccin Mocha color scheme
 # =============================================================================
 
+export CONFIG_DIR="${CONFIG_DIR:-$HOME/.config/sketchybar}"
 source "$CONFIG_DIR/colors.sh"
 
 # ── Bar appearance ────────────────────────────────────────────────────────
@@ -3095,7 +3287,7 @@ sketchybar --default \
   background.border_width=0
 
 # ── Load items ────────────────────────────────────────────────────────────
-for item in space.1 space.2 space.3 space.4 space.5 space.6 space.7 space.8 space.9 space.0 spaces_separator front_app monitor display_reload restore_status; do
+for item in space.1 space.2 space.3 space.4 space.5 space.6 space.7 space.8 space.9 space.0 spaces_separator front_app monitor display_reload restore_status accessibility_status; do
   sketchybar --remove "$item" >/dev/null 2>&1 || true
 done
 for slot in 0 1 2 3 4 5 6 7 8 9; do
@@ -3104,6 +3296,7 @@ for slot in 0 1 2 3 4 5 6 7 8 9; do
   done
   sketchybar --remove "spaces_separator.$slot" >/dev/null 2>&1 || true
   sketchybar --remove "monitor.$slot" >/dev/null 2>&1 || true
+  sketchybar --remove "restore_status.$slot" >/dev/null 2>&1 || true
 done
 
 source "$CONFIG_DIR/items/spaces.sh"
@@ -3258,6 +3451,7 @@ DISPLAY_RELOAD_ITEM_EOF
   cat > "$SKETCHY_DIR/items/restore_status.sh" << 'RESTORE_STATUS_ITEM_EOF'
 #!/usr/bin/env bash
 source "$CONFIG_DIR/colors.sh"
+source "$HOME/.config/aerospace/omarchy_space_state.sh"
 
 sketchybar --add item restore_status center \
   --set restore_status \
@@ -3275,6 +3469,33 @@ sketchybar --add item restore_status center \
     padding_left=8 \
     padding_right=8 \
     script="$CONFIG_DIR/plugins/restore_status.sh"
+
+monitors=$(omarchy_monitor_ids_by_slot 2>/dev/null || printf '1')
+slot=0
+while IFS= read -r monitor_id; do
+  [ -n "$monitor_id" ] || continue
+  [ "$slot" -gt 9 ] && break
+  display=$(omarchy_sketchybar_display_for_slot "$slot" 2>/dev/null || printf '%s\n' $((slot + 1)))
+  name="restore_status.$slot"
+  sketchybar --add item "$name" center \
+    --set "$name" \
+      display="$display" \
+      drawing=off \
+      updates=off \
+      icon.drawing=off \
+      label.font="SF Pro:Semibold:13.0" \
+      label.color=$YELLOW \
+      background.drawing=on \
+      background.color=$ITEM_BG \
+      background.border_color=$YELLOW \
+      background.border_width=1 \
+      background.corner_radius=6 \
+      background.height=24 \
+      padding_left=8 \
+      padding_right=8 \
+      script="$CONFIG_DIR/plugins/restore_status.sh"
+  slot=$((slot + 1))
+done <<< "$monitors"
 RESTORE_STATUS_ITEM_EOF
 
   # ── Right-side items: wifi, battery, clock ─────────────────────────────
@@ -3608,6 +3829,15 @@ RESTORE_GUARD="${OMARCHY_WINDOW_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_re
 PARTIAL_RESTORE_GUARD="${OMARCHY_WINDOW_PARTIAL_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_restore_incomplete}"
 VISIBLE_STATE="${XDG_RUNTIME_DIR:-/tmp}/omarchy_sketchybar_visible"
 PREVIOUS_STATE="${TMP_ROOT}/omarchy_restore_status_previous_bar"
+ACCESSIBILITY_HELPER="${OMARCHY_ACCESSIBILITY_REPORT_HELPER:-$HOME/.config/aerospace/accessibility_report.sh}"
+ACCESSIBILITY_WATCH_LOCK="${TMP_ROOT}/omarchy_restore_status_accessibility_watch.lock"
+ACCESSIBILITY_WATCH_INTERVAL="${OMARCHY_RESTORE_STATUS_WATCH_INTERVAL:-30}"
+SPACE_STATE_HELPER="$HOME/.config/aerospace/omarchy_space_state.sh"
+
+if [ -f "$SPACE_STATE_HELPER" ]; then
+  # shellcheck source=/dev/null
+  source "$SPACE_STATE_HELPER"
+fi
 
 current_visible_state() {
   if [ -f "$VISIBLE_STATE" ]; then
@@ -3623,8 +3853,66 @@ remember_bar_state() {
   current_visible_state > "$PREVIOUS_STATE" 2>/dev/null || true
 }
 
+status_items() {
+  local emitted=0
+  if command -v omarchy_monitor_ids_by_slot >/dev/null 2>&1 &&
+     command -v omarchy_sketchybar_display_for_slot >/dev/null 2>&1; then
+    local monitors slot monitor_id display
+    monitors=$(omarchy_monitor_ids_by_slot 2>/dev/null || true)
+    slot=0
+    while IFS= read -r monitor_id; do
+      [ -n "$monitor_id" ] || continue
+      [ "$slot" -gt 9 ] && break
+      display=$(omarchy_sketchybar_display_for_slot "$slot" 2>/dev/null || printf '%s\n' $((slot + 1)))
+      printf 'restore_status.%s|%s\n' "$slot" "$display"
+      emitted=1
+      slot=$((slot + 1))
+    done <<< "$monitors"
+  fi
+  [ "$emitted" -eq 1 ] || printf 'restore_status|\n'
+}
+
 ensure_item() {
   sketchybar --add item restore_status center >/dev/null 2>&1 || true
+  sketchybar --set restore_status drawing=off >/dev/null 2>&1 || true
+  local row name display
+  while IFS='|' read -r name display; do
+    [ "$name" = "restore_status" ] && continue
+    [ -n "$name" ] || continue
+    sketchybar --add item "$name" center >/dev/null 2>&1 || true
+    if [ -n "$display" ]; then
+      sketchybar --set "$name" display="$display" >/dev/null 2>&1 || true
+    fi
+  done <<< "$(status_items)"
+}
+
+set_status_items() {
+  local label="$1" color="$2" row name display
+  while IFS='|' read -r name display; do
+    [ -n "$name" ] || continue
+    if [ -n "$display" ]; then
+      sketchybar --set "$name" display="$display" >/dev/null 2>&1 || true
+    fi
+    sketchybar --set "$name" \
+      drawing=on \
+      icon.drawing=off \
+      label="$label" \
+      label.color=$color \
+      background.drawing=on \
+      background.color=$ITEM_BG \
+      background.border_color=$color \
+      background.border_width=1 \
+      background.corner_radius=6 \
+      background.height=24 >/dev/null 2>&1 || true
+  done <<< "$(status_items)"
+}
+
+hide_status_items() {
+  local row name display
+  while IFS='|' read -r name display; do
+    [ -n "$name" ] || continue
+    sketchybar --set "$name" drawing=off >/dev/null 2>&1 || true
+  done <<< "$(status_items)"
 }
 
 show_active() {
@@ -3632,17 +3920,7 @@ show_active() {
   ensure_item
   sketchybar --bar hidden=off topmost=window >/dev/null 2>&1 || true
   printf '1' > "$VISIBLE_STATE" 2>/dev/null || true
-  sketchybar --set restore_status \
-    drawing=on \
-    icon.drawing=off \
-    label="Restoring windows" \
-    label.color=$YELLOW \
-    background.drawing=on \
-    background.color=$ITEM_BG \
-    background.border_color=$YELLOW \
-    background.border_width=1 \
-    background.corner_radius=6 \
-    background.height=24 >/dev/null 2>&1 || true
+  set_status_items "Restoring windows" "$YELLOW"
 }
 
 show_incomplete() {
@@ -3650,17 +3928,16 @@ show_incomplete() {
   ensure_item
   sketchybar --bar hidden=off topmost=window >/dev/null 2>&1 || true
   printf '1' > "$VISIBLE_STATE" 2>/dev/null || true
-  sketchybar --set restore_status \
-    drawing=on \
-    icon.drawing=off \
-    label="Restore incomplete" \
-    label.color=$RED \
-    background.drawing=on \
-    background.color=$ITEM_BG \
-    background.border_color=$RED \
-    background.border_width=1 \
-    background.corner_radius=6 \
-    background.height=24 >/dev/null 2>&1 || true
+  set_status_items "Restore incomplete" "$RED"
+}
+
+show_accessibility() {
+  local issues="$1"
+  remember_bar_state
+  ensure_item
+  sketchybar --bar hidden=off topmost=window >/dev/null 2>&1 || true
+  printf '1' > "$VISIBLE_STATE" 2>/dev/null || true
+  set_status_items "AX: $issues" "$RED"
 }
 
 restore_bar_state() {
@@ -3680,8 +3957,42 @@ restore_bar_state() {
 
 show_complete() {
   ensure_item
-  sketchybar --set restore_status drawing=off >/dev/null 2>&1 || true
+  hide_status_items
   restore_bar_state
+}
+
+accessibility_issues() {
+  [ -x "$ACCESSIBILITY_HELPER" ] || return 1
+  "$ACCESSIBILITY_HELPER" --brief 2>/dev/null || true
+}
+
+restore_guard_active() {
+  [ -e "$STARTUP_RESTORE_GUARD" ] || [ -e "$RESTORE_GUARD" ] || [ -e "$PARTIAL_RESTORE_GUARD" ]
+}
+
+start_accessibility_watch() {
+  case "$ACCESSIBILITY_WATCH_INTERVAL" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  [ "$ACCESSIBILITY_WATCH_INTERVAL" -gt 0 ] || return 0
+  mkdir "$ACCESSIBILITY_WATCH_LOCK" 2>/dev/null || return 0
+
+  local plugin_path="${BASH_SOURCE[0]:-$0}"
+  (
+    trap 'rmdir "$ACCESSIBILITY_WATCH_LOCK" >/dev/null 2>&1 || true' EXIT
+    while sleep "$ACCESSIBILITY_WATCH_INTERVAL"; do
+      if restore_guard_active; then
+        "$plugin_path" refresh >/dev/null 2>&1 || true
+        continue
+      fi
+      local issues
+      issues="$(accessibility_issues)"
+      if [ -z "$issues" ]; then
+        "$plugin_path" refresh >/dev/null 2>&1 || true
+        break
+      fi
+    done
+  ) >/dev/null 2>&1 &
 }
 
 mode="${1:-refresh}"
@@ -3700,6 +4011,9 @@ case "$mode" in
       show_active
     elif [ -e "$PARTIAL_RESTORE_GUARD" ]; then
       show_incomplete
+    elif issues="$(accessibility_issues)" && [ -n "$issues" ]; then
+      show_accessibility "$issues"
+      start_accessibility_watch
     else
       show_complete
     fi
@@ -3785,10 +4099,11 @@ WIFI_PLUGIN_EOF
 # CHROME REHOME DAEMON
 #
 # Swift binary that subscribes to Chrome's AXWindowCreated events and moves
-# each newly-opened ordinary Chrome window to the first empty workspace on the
-# monitor where Chrome created it. If every workspace on that monitor is
-# occupied, the window stays put. The updated window state is saved after the
-# decision so reboot restore learns the final placement.
+# each newly-opened ordinary Chrome window on the built-in monitor to an
+# existing Chrome workspace, or to the first empty general-purpose workspace.
+# External monitor slots are left alone. Reserved app workspaces are not empty
+# fallback targets. The updated window state is saved after the decision so
+# reboot restore learns the final placement.
 # =============================================================================
 write_chrome_rehome_daemon() {
   info "Writing chrome_rehome daemon..."
@@ -3808,6 +4123,7 @@ let aerospacePath = "/opt/homebrew/bin/aerospace"
 let debouncedSavePath = NSHomeDirectory() + "/.config/aerospace/window_state_debounced_save.sh"
 let chromeBundleID = "com.google.Chrome"
 let scanOrder: [String] = ["1","2","3","4","5","6","7","8","9","0"]
+let generalWorkspaceKeys: [String] = ["7","8","9"]
 let aerospaceStartupAttempts = 60
 let windowListingAttempts = 60
 let tmpDir = ProcessInfo.processInfo.environment["TMPDIR"] ?? "/tmp"
@@ -3880,15 +4196,39 @@ func activeMonitorSlotCount() -> Int {
     return out.split(separator: "\n").count
 }
 
-func firstEmptyOnMonitor(_ monitor: String, skip currentWs: String) -> String? {
+struct WindowRow {
+    let id: UInt32
+    let ws: String
+    let app: String
+}
+
+func chromeWorkspaceOnMonitor(_ monitor: String, rows: [WindowRow], skip currentWs: String, newWindowId: UInt32) -> String? {
     for key in scanOrder {
         let ws = "\(monitor)\(key)"
         if ws == currentWs { continue }
-        let out = sh(["list-windows", "--workspace", ws, "--format", "%{window-id}"])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if out.isEmpty { return ws }
+        let hasChrome = rows.contains {
+            $0.ws == ws && $0.id != newWindowId && $0.app == "Google Chrome"
+        }
+        if hasChrome { return ws }
     }
     return nil
+}
+
+func firstEmptyGeneralWorkspaceOnMonitor(_ monitor: String, rows: [WindowRow], skip currentWs: String) -> String? {
+    for key in generalWorkspaceKeys {
+        let ws = "\(monitor)\(key)"
+        if ws == currentWs { continue }
+        let occupied = rows.contains { $0.ws == ws }
+        if !occupied { return ws }
+    }
+    return nil
+}
+
+func targetWorkspaceForChrome(monitor: String, rows: [WindowRow], currentWs: String, newWindowId: UInt32) -> String? {
+    if let chromeWs = chromeWorkspaceOnMonitor(monitor, rows: rows, skip: currentWs, newWindowId: newWindowId) {
+        return chromeWs
+    }
+    return firstEmptyGeneralWorkspaceOnMonitor(monitor, rows: rows, skip: currentWs)
 }
 
 func handleNewWindow(_ wid: CGWindowID) {
@@ -3904,18 +4244,27 @@ func handleNewWindow(_ wid: CGWindowID) {
     for attempt in 0..<windowListingAttempts {
         let listing = sh(["list-windows", "--all", "--format", "%{window-id}|%{workspace}|%{app-name}"])
         var currentWs: String? = nil
-        struct Row { let id: UInt32; let ws: String; let app: String }
-        var rows: [Row] = []
+        var rows: [WindowRow] = []
         for line in listing.split(separator: "\n") {
             let parts = line.split(separator: "|", maxSplits: 2)
             guard parts.count == 3, let id = UInt32(parts[0]) else { continue }
-            let row = Row(id: id, ws: String(parts[1]), app: String(parts[2]))
+            let row = WindowRow(id: id, ws: String(parts[1]), app: String(parts[2]))
             rows.append(row)
             if id == wid { currentWs = row.ws }
         }
         guard let ws = currentWs else {
             if attempt < windowListingAttempts - 1 { Thread.sleep(forTimeInterval: 0.5) }
             continue
+        }
+        guard let monitor = ws.first else {
+            scheduleWindowStateSave("chrome-window-detected")
+            return
+        }
+        let monitorSlot = Int(String(monitor)) ?? 0
+        if monitorSlot != 0 {
+            log("Chrome window \(wid) on external workspace \(ws): leaving in place")
+            scheduleWindowStateSave("chrome-window-detected")
+            return
         }
         let siblingChromeOnWs = rows.contains {
             $0.ws == ws && $0.id != wid && $0.app == "Google Chrome"
@@ -3925,19 +4274,14 @@ func handleNewWindow(_ wid: CGWindowID) {
             scheduleWindowStateSave("chrome-window-detected")
             return
         }
-        guard let monitor = ws.first else {
-            scheduleWindowStateSave("chrome-window-detected")
-            return
-        }
-        let monitorSlot = Int(String(monitor)) ?? 0
         let activeSlotCount = activeMonitorSlotCount()
         let targetMonitor = monitorSlot < activeSlotCount ? String(monitor) : "0"
-        if let target = firstEmptyOnMonitor(targetMonitor, skip: ws) {
+        if let target = targetWorkspaceForChrome(monitor: targetMonitor, rows: rows, currentWs: ws, newWindowId: wid) {
             log("Chrome window \(wid) alone on \(ws) -> \(target)")
             sh(["move-node-to-workspace", "--window-id", "\(wid)", target])
             sh(["workspace", target])
         } else {
-            log("Chrome window \(wid) alone on \(ws): monitor \(targetMonitor) full, leaving in place")
+            log("Chrome window \(wid) alone on \(ws): no Chrome/general workspace available on monitor \(targetMonitor), leaving in place")
         }
         scheduleWindowStateSave("chrome-window-detected")
         return
@@ -4159,21 +4503,27 @@ usage() {
   echo ""
   echo -e "${BOLD}omarchy-macos${RESET} — Hyprland-style window management for macOS M1"
   echo ""
-  echo "  ./install.sh install   install and configure core tools"
+  echo "No action is taken unless you pass one of these commands:"
+  echo ""
+  echo "  ./omarchy.sh install   install and configure core tools"
   echo "                         set OMARCHY_ENABLE_BORDERS=1 to include JankyBorders"
-  echo "  ./install.sh refresh   rewrite generated configs without reinstalling packages"
-  echo "  ./install.sh repair-spaces"
+  echo "  ./omarchy.sh refresh   rewrite generated configs without reinstalling packages"
+  echo "  ./omarchy.sh repair-spaces"
   echo "                         move windows off detached monitor workspaces"
-  echo "  ./install.sh save-window-state"
+  echo "  ./omarchy.sh save-window-state"
   echo "                         save current window/workspace layout for reboot restore"
-  echo "  ./install.sh restore-window-state"
+  echo "  ./omarchy.sh restore-window-state"
   echo "                         restore the saved window/workspace layout now"
-  echo "  ./install.sh shortcuts-widget"
+  echo "  ./omarchy.sh shortcuts-widget"
   echo "                         regenerate the desktop shortcut image"
-  echo "  ./install.sh secure-input [--watch [seconds]]"
+  echo "  ./omarchy.sh secure-input [--watch [seconds]]"
   echo "                         show the macOS Secure Input owner"
-  echo "  ./install.sh revert    undo everything, restore previous state"
-  echo "  ./install.sh status    show install and service status"
+  echo "  ./omarchy.sh accessibility"
+  echo "                         show Accessibility permissions that need to be redone"
+  echo "  ./omarchy.sh revert    undo everything, restore previous state"
+  echo "  ./omarchy.sh status    show install and service status"
+  echo ""
+  echo "Compatibility: ./install.sh still accepts the same commands."
   echo ""
 }
 
@@ -4185,7 +4535,9 @@ case "${1:-}" in
   restore-window-state) cmd_restore_window_state ;;
   shortcuts-widget) cmd_shortcuts_widget ;;
   secure-input)  cmd_secure_input  "$@" ;;
+  accessibility) cmd_accessibility "$@" ;;
   revert)        cmd_revert        ;;
   status)        cmd_status        ;;
+  "")            usage; exit 0     ;;
   *)             usage; exit 1     ;;
 esac

@@ -8,26 +8,26 @@ AeroSpace, skhd, and SketchyBar. JankyBorders is optional.
 Run the normal installer:
 
 ```sh
-./install.sh install
+./omarchy.sh install
 ```
 
 Install the optional focused-window border service:
 
 ```sh
-OMARCHY_ENABLE_BORDERS=1 ./install.sh install
+OMARCHY_ENABLE_BORDERS=1 ./omarchy.sh install
 ```
 
 Check status:
 
 ```sh
-./install.sh status
+./omarchy.sh status
 ```
 
 Diagnose macOS Secure Input when global hotkeys stop firing:
 
 ```sh
-./install.sh secure-input
-./install.sh secure-input --watch
+./omarchy.sh secure-input
+./omarchy.sh secure-input --watch
 ```
 
 Secure Input is a macOS session-level keyboard privacy mode. When it is stuck,
@@ -39,7 +39,7 @@ when there are any.
 Regenerate and restart the desktop shortcut cheatsheet widget:
 
 ```sh
-./install.sh shortcuts-widget
+./omarchy.sh shortcuts-widget
 ```
 
 The exact AeroSpace window/workspace layout is saved automatically every 15
@@ -48,7 +48,7 @@ You can also save it manually after arranging windows the way you want them to
 come back after reboot:
 
 ```sh
-./install.sh save-window-state
+./omarchy.sh save-window-state
 ```
 
 The saved state is restored automatically at login/startup. Startup autosaves
@@ -56,19 +56,23 @@ are held until restore finishes, and startup restore itself does not write a
 post-restore snapshot, so login events cannot replace the pre-reboot snapshot.
 SketchyBar temporarily shows `Restoring windows` while this is running. If some
 saved windows never appear, the bar stays visible with `Restore incomplete`;
-arrange the windows as desired and run `./install.sh save-window-state` to
+arrange the windows as desired and run `./omarchy.sh save-window-state` to
 accept that layout and clear the warning.
 
 Windows without a saved location or explicit app rule stay where they are
 created so browser popups and transient dialogs are not moved out from under the
-app that opened them. Ordinary Chrome windows are the exception: new windows
-move to the first empty workspace on their monitor unless that workspace already
-contains Chrome. Chrome app wrappers such as the Gmail app are left unmanaged by
-app-name rules because their click handling is more sensitive than ordinary
-Chrome tabs. You can also replay the saved state manually:
+app that opened them. Ordinary Chrome windows are the exception: if a new Chrome
+window opens somewhere that does not already contain Chrome, it should first
+join an existing ordinary Chrome workspace on that monitor. If none exists, it
+may move to the first empty general-purpose workspace on that monitor. Named or
+reserved workspaces such as Mail, Msg, Music, Terms, Editors, Agents, and Steam
+are not candidates just because they are empty. Chrome app wrappers such as the
+Gmail app are left unmanaged by app-name rules because their click handling is
+more sensitive than ordinary Chrome tabs. You can also replay the saved state
+manually:
 
 ```sh
-./install.sh restore-window-state
+./omarchy.sh restore-window-state
 ```
 
 1Password windows are floated so authentication dialogs stay usable on the
@@ -86,7 +90,7 @@ numeric/app labels.
 Revert the install:
 
 ```sh
-./install.sh revert
+./omarchy.sh revert
 ```
 
 The normal installer does not install CuaDriver.
@@ -99,7 +103,7 @@ This repo includes an optional local CuaDriver installer at:
 scripts/install-cua-driver-local.sh
 ```
 
-It is not run by `./install.sh install`. Run it manually only if you want
+It is not run by `./omarchy.sh install`. Run it manually only if you want
 CuaDriver installed as an optional computer-use driver.
 
 The script can either install a previously downloaded CuaDriver release from a

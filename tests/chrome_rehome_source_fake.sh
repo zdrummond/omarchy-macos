@@ -18,10 +18,24 @@ awk '/cat > "\$source_tmp" << '\''CHROME_REHOME_SWIFT_EOF'\''/{in_block=1; next}
     unless $source =~ /AXIsProcessTrustedWithOptions/;
   die "missing Chrome workspace scan order\n"
     unless $source =~ /let scanOrder: \[String\] = \["1","2","3","4","5","6","7","8","9","0"\]/;
-  die "missing first-empty workspace helper\n"
-    unless $source =~ /func firstEmptyOnMonitor\(_ monitor: String, skip currentWs: String\) -> String\?/;
+  die "missing general workspace key filter\n"
+    unless $source =~ /let generalWorkspaceKeys: \[String\] = \["7","8","9"\]/;
+  die "missing existing Chrome workspace preference\n"
+    unless $source =~ /func chromeWorkspaceOnMonitor\(_ monitor: String, rows: \[WindowRow\], skip currentWs: String, newWindowId: UInt32\) -> String\?/;
+  die "missing reserved-workspace-safe empty fallback\n"
+    unless $source =~ /func firstEmptyGeneralWorkspaceOnMonitor\(_ monitor: String, rows: \[WindowRow\], skip currentWs: String\) -> String\?/ &&
+           $source =~ /for key in generalWorkspaceKeys/;
+  die "missing combined Chrome target selector\n"
+    unless $source =~ /func targetWorkspaceForChrome\(monitor: String, rows: \[WindowRow\], currentWs: String, newWindowId: UInt32\) -> String\?/ &&
+           $source =~ /chromeWorkspaceOnMonitor\(monitor, rows: rows, skip: currentWs, newWindowId: newWindowId\)/ &&
+           $source =~ /firstEmptyGeneralWorkspaceOnMonitor\(monitor, rows: rows, skip: currentWs\)/;
   die "missing same-workspace Chrome sibling guard\n"
     unless $source =~ /already has Chrome here, leaving in place/;
+  die "missing external-monitor no-rehome guard\n"
+    unless $source =~ /if monitorSlot != 0 \{/ &&
+           index($source, q{on external workspace \(ws): leaving in place}) >= 0;
+  die "should not keep old all-workspaces first-empty helper\n"
+    if $source =~ /func firstEmptyOnMonitor/;
   die "missing rehome move command\n"
     unless $source =~ /sh\(\["move-node-to-workspace", "--window-id", "\\\(wid\)", target\]\)/;
   die "missing target workspace focus\n"
