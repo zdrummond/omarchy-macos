@@ -28,6 +28,10 @@ awk '/cat > "\$source_tmp" << '\''CHROME_REHOME_SWIFT_EOF'\''/{in_block=1; next}
     unless $source =~ /sh\(\["workspace", target\]\)/;
   die "missing post-detection window-state save\n"
     unless $source =~ /scheduleWindowStateSave\("chrome-window-detected"\)/;
+  die "missing restore guard paths\n"
+    unless $source =~ /restoreGuardPath/ && $source =~ /startupRestoreGuardPath/ && $source =~ /partialRestoreGuardPath/;
+  die "missing restore-active rehome guard\n"
+    unless $source =~ /restoreActive\(\)/ && $source =~ /restore is active or incomplete; leaving in place/;
   die "queue worker path should not be present\n"
     if $source =~ /omarchy_chrome_rehome|AEROSPACE_WINDOW_ID/;
 ' "$SOURCE"

@@ -7,6 +7,7 @@
 #   ./install.sh refresh   — rewrite generated configs without reinstalling brew packages
 #   ./install.sh save-window-state — save current window/workspace layout
 #   ./install.sh restore-window-state — replay saved window/workspace layout
+#   ./install.sh secure-input [--watch] — diagnose macOS Secure Input owner
 #   ./install.sh revert    — undo everything, restore previous state
 #   ./install.sh status    — show what's installed and running
 #
@@ -48,6 +49,7 @@ AEROSPACE_START_PLIST="$HOME/Library/LaunchAgents/$AEROSPACE_START_LABEL.plist"
 
 WINDOW_PICKER_SRC="$AEROSPACE_DIR/window_picker.swift"
 WINDOW_PICKER_BIN="$AEROSPACE_DIR/window_picker"
+SECURE_INPUT_HELPER="$AEROSPACE_DIR/secure_input_report.sh"
 
 CHROME_REHOME_SRC="$SKETCHY_DIR/plugins/chrome_rehome.swift"
 CHROME_REHOME_LABEL="com.omarchy-macos.chrome_rehome"
@@ -114,6 +116,7 @@ cmd_install() {
   write_goto_space_helper
   write_window_cycle_helper
   write_window_picker_helper
+  write_secure_input_helper
   write_aerospace_start_agent
   write_skhd_config
   write_sketchybar_config
@@ -171,6 +174,7 @@ cmd_refresh() {
   write_goto_space_helper
   write_window_cycle_helper
   write_window_picker_helper
+  write_secure_input_helper
   write_aerospace_start_agent
   write_skhd_config
   write_sketchybar_config
@@ -237,6 +241,12 @@ cmd_restore_window_state() {
   header "omarchy-macos restore window state"
   write_window_state_helper
   "$WINDOW_STATE_WRAPPER" restore
+}
+
+cmd_secure_input() {
+  header "omarchy-macos secure input"
+  write_secure_input_helper >/dev/null
+  "$SECURE_INPUT_HELPER" "${@:2}"
 }
 
 write_shortcut_desktop_widget() {
@@ -498,6 +508,10 @@ cmd_status() {
     warn "chrome_rehome is not Accessibility-trusted — grant Omarchy Chrome Rehome in Privacy & Security → Accessibility"
   fi
   check_window_state
+  if [[ -x "$SECURE_INPUT_HELPER" ]]; then
+    echo ""
+    "$SECURE_INPUT_HELPER" --brief || true
+  fi
 
   echo ""
   if [[ -f "$INSTALLED_MARKER" ]]; then
@@ -636,7 +650,7 @@ start_services() {
 
   info "Starting aerospace..."
   if [[ -d /Applications/AeroSpace.app ]]; then
-    open -g -a /Applications/AeroSpace.app 2>/dev/null || \
+    open -g /Applications/AeroSpace.app 2>/dev/null || \
       warn "Could not auto-start aerospace — launch /Applications/AeroSpace.app manually"
     for _ in {1..20}; do
       if aerospace list-monitors --format '%{monitor-id}' >/dev/null 2>&1; then
@@ -1044,30 +1058,74 @@ omarchy_aerospace_available() {
   "$OMARCHY_AEROSPACE_BIN" list-monitors --format '%{monitor-id}' >/dev/null 2>&1
 }
 
-omarchy_monitor_ids_by_slot() {
+omarchy_monitor_rows_by_slot() {
   local rows line monitor_id monitor_name
-  rows=$("$OMARCHY_AEROSPACE_BIN" list-monitors --format '%{monitor-id}|%{monitor-name}' 2>/dev/null) || return 1
+  rows=$("$OMARCHY_AEROSPACE_BIN" list-monitors --format '%{monitor-id}|%{monitor-name}|%{monitor-appkit-nsscreen-screens-id}' 2>/dev/null) || return 1
 
-  local built_in_ids=()
-  local external_ids=()
+  local built_in_rows=()
+  local external_rows=()
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     monitor_id="${line%%|*}"
-    monitor_name="${line#*|}"
+    line="${line#*|}"
+    monitor_name="${line%%|*}"
     [ -n "$monitor_id" ] || continue
     if [[ "$monitor_name" =~ [Bb]uilt.?in ]]; then
-      built_in_ids+=("$monitor_id")
+      built_in_rows+=("$monitor_id|$line")
     else
-      external_ids+=("$monitor_id")
+      external_rows+=("$monitor_id|$line")
     fi
   done <<< "$rows"
 
-  if ((${#built_in_ids[@]})); then
-    printf '%s\n' "${built_in_ids[@]}"
+  if ((${#built_in_rows[@]})); then
+    printf '%s\n' "${built_in_rows[@]}"
   fi
-  if ((${#external_ids[@]})); then
-    printf '%s\n' "${external_ids[@]}"
+  if ((${#external_rows[@]})); then
+    printf '%s\n' "${external_rows[@]}"
   fi
+}
+
+omarchy_monitor_ids_by_slot() {
+  local row
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    printf '%s\n' "${row%%|*}"
+  done < <(omarchy_monitor_rows_by_slot)
+}
+
+omarchy_sketchybar_display_for_slot() {
+  local target_slot="$1"
+  [[ "$target_slot" =~ ^[0-9]+$ ]] || return 1
+
+  local target_monitor_id
+  target_monitor_id=$(omarchy_monitor_id_for_slot "$target_slot") || return 1
+
+  # SketchyBar display ids are not AeroSpace monitor ids. On the observed
+  # dynamic topology they are the built-in display first, then externals in
+  # reverse Omarchy/AeroSpace external order.
+  local rows line monitor_id rest monitor_name built_in_count external_count external_index=0
+  rows=$(omarchy_monitor_rows_by_slot) || return 1
+  built_in_count=$(printf '%s\n' "$rows" | awk -F'|' '$2 ~ /[Bb]uilt.?in/ { count++ } END { print count+0 }')
+  external_count=$(printf '%s\n' "$rows" | awk -F'|' '$2 !~ /[Bb]uilt.?in/ { count++ } END { print count+0 }')
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    monitor_id="${line%%|*}"
+    rest="${line#*|}"
+    monitor_name="${rest%%|*}"
+    if [ "$monitor_id" = "$target_monitor_id" ]; then
+      if [[ "$monitor_name" =~ [Bb]uilt.?in ]]; then
+        printf '1\n'
+      else
+        printf '%s\n' $((built_in_count + external_count - external_index))
+      fi
+      return 0
+    fi
+    if ! [[ "$monitor_name" =~ [Bb]uilt.?in ]]; then
+      external_index=$((external_index + 1))
+    fi
+  done <<< "$rows"
+
+  return 1
 }
 
 omarchy_slot_for_monitor_id() {
@@ -1220,6 +1278,9 @@ omarchy_repair_detached_monitor_workspaces() {
         "$OMARCHY_AEROSPACE_BIN" move-node-to-workspace --window-id "$legacy_window_id" "$legacy_target" >/dev/null 2>&1 || true
       done <<< "$legacy_windows"
       "$OMARCHY_AEROSPACE_BIN" move-workspace-to-monitor --workspace "$legacy_target" "$monitor_id" >/dev/null 2>&1 || true
+      "$OMARCHY_AEROSPACE_BIN" focus-monitor "$monitor_id" >/dev/null 2>&1 || true
+      "$OMARCHY_AEROSPACE_BIN" workspace "$legacy_target" >/dev/null 2>&1 || true
+      "$OMARCHY_AEROSPACE_BIN" focus-monitor "$monitor_id" >/dev/null 2>&1 || true
     elif [[ "$visible_workspace" =~ ^[0-9][0-9]$ ]]; then
       visible_slot="${visible_workspace:0:1}"
       if [ "$visible_slot" != "$legacy_slot" ]; then
@@ -1227,6 +1288,11 @@ omarchy_repair_detached_monitor_workspaces() {
         if [ -n "$visible_monitor_id" ]; then
           "$OMARCHY_AEROSPACE_BIN" move-workspace-to-monitor --workspace "$visible_workspace" "$visible_monitor_id" >/dev/null 2>&1 || true
         fi
+        legacy_target="${legacy_slot}${visible_workspace:1:1}"
+        "$OMARCHY_AEROSPACE_BIN" move-workspace-to-monitor --workspace "$legacy_target" "$monitor_id" >/dev/null 2>&1 || true
+        "$OMARCHY_AEROSPACE_BIN" focus-monitor "$monitor_id" >/dev/null 2>&1 || true
+        "$OMARCHY_AEROSPACE_BIN" workspace "$legacy_target" >/dev/null 2>&1 || true
+        "$OMARCHY_AEROSPACE_BIN" focus-monitor "$monitor_id" >/dev/null 2>&1 || true
       fi
     fi
     legacy_slot=$((legacy_slot + 1))
@@ -1469,6 +1535,7 @@ my $skip_empty_save = $ENV{OMARCHY_WINDOW_SKIP_EMPTY_SAVE} || 0;
 my $tmp_dir = $ENV{TMPDIR} || "/tmp";
 my $restore_guard = $ENV{OMARCHY_WINDOW_RESTORE_GUARD} || "$tmp_dir/omarchy_window_state_restore_active";
 my $startup_restore_guard = $ENV{OMARCHY_WINDOW_STARTUP_RESTORE_GUARD} || "$tmp_dir/omarchy_window_state_startup_restore_active";
+my $partial_restore_guard = $ENV{OMARCHY_WINDOW_PARTIAL_RESTORE_GUARD} || "$tmp_dir/omarchy_window_state_restore_incomplete";
 my $debounced_saver = $ENV{OMARCHY_WINDOW_DEBOUNCED_SAVER} || "$home/.config/aerospace/window_state_debounced_save.sh";
 my $history_limit = $ENV{OMARCHY_WINDOW_STATE_HISTORY_LIMIT} || 5;
 my $sep = "\x1f";
@@ -1693,6 +1760,11 @@ sub save_state {
         say_and_log("Restore is active; skipped window state save ($mode: $reason)");
         return 0;
     }
+    if ($mode eq "auto" && -e $partial_restore_guard) {
+        say_and_log("Previous restore is incomplete; skipped automatic window state save ($mode: $reason)");
+        return 0;
+    }
+    unlink $partial_restore_guard if $mode ne "auto";
     wait_for_aerospace($save_wait_attempts) or die "AeroSpace is not reachable; cannot save window state\n";
     my $topology = current_topology();
     my @windows = prepare_windows_for_save(current_windows(1));
@@ -1832,12 +1904,10 @@ sub find_match {
         }
     }
 
-    if (!length($saved->{title} || "")) {
-        my @matches = grep {
-            !$used->{$_->{window_id}} && same_identity($_, $saved)
-        } @{$current};
-        return $matches[0] if @matches == 1;
-    }
+    my @identity_matches = grep {
+        !$used->{$_->{window_id}} && same_identity($_, $saved)
+    } @{$current};
+    return $identity_matches[0] if @identity_matches == 1;
 
     return undef;
 }
@@ -1915,7 +1985,7 @@ sub schedule_post_restore_save {
 sub restore_state_inner {
     unless (-f $state_file) {
         say_and_log("No saved window state at $state_file; skipping exact restore");
-        return 0;
+        return 1;
     }
     wait_for_aerospace(60) or die "AeroSpace is not reachable; cannot restore window state\n";
 
@@ -1929,17 +1999,18 @@ sub restore_state_inner {
     my @saved = @{$snapshot->{windows}};
     if (!@saved) {
         say_and_log("Saved window state is empty; nothing to restore");
-        return 0;
+        return 1;
     }
 
     my %done;
     my %reported;
+    my %claimed_window_ids;
     my $total = scalar(@saved);
     log_msg("restoring $selection_reason with " . $total . " saved windows");
 
     for my $attempt (1..$restore_attempts) {
         my @current = current_windows();
-        my %used;
+        my %used = %claimed_window_ids;
 
         for my $idx (0..$#saved) {
             next if $done{$idx};
@@ -1955,12 +2026,14 @@ sub restore_state_inner {
             if ($match->{workspace} eq $target) {
                 log_msg("window $match->{window_id} already on $target: $saved->{app_name} / $saved->{title}") unless $reported{$idx}++;
                 $done{$idx} = 1;
+                $claimed_window_ids{$match->{window_id}} = 1;
                 next;
             }
 
             if (aerospace_ok("move-node-to-workspace", "--window-id", "$match->{window_id}", "$target")) {
                 log_msg("moved window $match->{window_id} from $match->{workspace} to $target: $saved->{app_name} / $saved->{title}");
                 $done{$idx} = 1;
+                $claimed_window_ids{$match->{window_id}} = 1;
             } else {
                 log_msg("failed moving window $match->{window_id} to $target: $saved->{app_name} / $saved->{title}");
             }
@@ -1986,9 +2059,11 @@ sub restore_state_inner {
             if ($match->{workspace} eq $target) {
                 log_msg("Chrome fallback window $match->{window_id} already on $target") unless $reported{$idx}++;
                 $done{$idx} = 1;
+                $claimed_window_ids{$match->{window_id}} = 1;
             } elsif (aerospace_ok("move-node-to-workspace", "--window-id", "$match->{window_id}", "$target")) {
                 log_msg("Chrome fallback moved window $match->{window_id} from $match->{workspace} to $target");
                 $done{$idx} = 1;
+                $claimed_window_ids{$match->{window_id}} = 1;
             } else {
                 log_msg("Chrome fallback failed moving window $match->{window_id} to $target");
             }
@@ -1997,7 +2072,7 @@ sub restore_state_inner {
         my $remaining = grep { !$done{$_} } 0..$#saved;
         if ($remaining == 0) {
             say_and_log("Restored $total saved windows from $state_file");
-            return 0;
+            return 1;
         }
 
         last if $attempt == $restore_attempts;
@@ -2022,11 +2097,20 @@ sub restore_state {
         print {$fh} timestamp() . "\n";
         close $fh;
     }
-    my $ok = eval { restore_state_inner(); 1 };
+    my $complete = eval { restore_state_inner() };
     my $err = $@;
     unlink $restore_guard;
-    die $err unless $ok;
-    schedule_post_restore_save();
+    die $err if $err;
+    if ($complete) {
+        unlink $partial_restore_guard;
+        schedule_post_restore_save();
+    } else {
+        if (open my $fh, ">", $partial_restore_guard) {
+            print {$fh} timestamp() . "\n";
+            close $fh;
+        }
+        log_msg("restore incomplete; automatic saves are blocked until a successful restore or manual save");
+    }
     return 0;
 }
 
@@ -2647,6 +2731,204 @@ WINDOW_PICKER_SWIFT_EOF
 }
 
 # =============================================================================
+# SECURE INPUT HELPER
+# Reports the current macOS Secure Input owner. Secure Input can block global
+# hotkeys, so this intentionally stays terminal-first instead of relying on an
+# AeroSpace/skhd binding that may not fire while Secure Input is active.
+# =============================================================================
+write_secure_input_helper() {
+  info "Writing secure input helper..."
+  mkdir -p "$AEROSPACE_DIR"
+
+  cat > "$SECURE_INPUT_HELPER" << 'SECURE_INPUT_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  secure_input_report.sh           show current Secure Input owner
+  secure_input_report.sh --brief   one-line status
+  secure_input_report.sh --watch [seconds]
+                                  print when the owner changes
+
+Secure Input is a macOS session flag. The PID is best-effort: if the process
+exited without clearing Secure Input, the session can retain a stale PID until
+the login session is reset.
+USAGE
+}
+
+secure_input_pid() {
+  /usr/sbin/ioreg -r -k IOConsoleUsers -d 1 -l 2>/dev/null |
+    /usr/bin/sed -n 's/.*"kCGSSessionSecureInputPID"=\([0-9][0-9]*\).*/\1/p' |
+    /usr/bin/head -n 1
+}
+
+process_line() {
+  local pid="$1"
+  /bin/ps -p "$pid" -o pid=,ppid=,stat=,comm=,args= 2>/dev/null || true
+}
+
+process_comm() {
+  local pid="$1"
+  /bin/ps -p "$pid" -o comm= 2>/dev/null | /usr/bin/sed 's/^[[:space:]]*//; s/[[:space:]]*$//' || true
+}
+
+parent_chain() {
+  local pid="$1" depth=0 line ppid
+  while [[ "$pid" =~ ^[0-9]+$ ]] && [ "$pid" -gt 1 ] && [ "$depth" -lt 10 ]; do
+    line="$(process_line "$pid")"
+    [ -n "$line" ] || break
+    printf "  %s\n" "$line"
+    ppid="$(/bin/ps -p "$pid" -o ppid= 2>/dev/null | /usr/bin/tr -d ' ')"
+    [ -n "$ppid" ] || break
+    [ "$ppid" = "$pid" ] && break
+    pid="$ppid"
+    depth=$((depth + 1))
+  done
+}
+
+aerospace_windows_for_comm() {
+  local comm="$1" app_name
+  [ -n "$comm" ] || return 0
+  app_name="${comm##*/}"
+  command -v aerospace >/dev/null 2>&1 || return 0
+  aerospace list-windows --all --format '%{workspace}|%{app-name}|%{window-title}' 2>/dev/null |
+    /usr/bin/awk -F'|' -v app="$app_name" '
+      BEGIN { found = 0 }
+      index(tolower($2), tolower(app)) {
+        found = 1
+        title = $3 == "" ? "(untitled)" : $3
+        printf "  [%s] %s - %s\n", $1, $2, title
+      }
+      END { exit(found ? 0 : 1) }
+    '
+}
+
+hid_clients() {
+  /usr/sbin/ioreg -l -w 0 -r -c IOHIDSystem 2>/dev/null |
+    /usr/bin/sed -n 's/.*"IOUserClientCreator" = "\(pid [^"]*\)".*/  \1/p' |
+    /usr/bin/sort -u
+}
+
+report_once() {
+  local mode="${1:-full}" pid line comm
+  pid="$(secure_input_pid)"
+  if [ -z "$pid" ] || [ "$pid" = "0" ]; then
+    if [ "$mode" = "brief" ]; then
+      echo "Secure Input: off"
+    else
+      echo "Secure Input is off."
+    fi
+    return 0
+  fi
+
+  line="$(process_line "$pid")"
+  if [ "$mode" = "brief" ]; then
+    if [ -n "$line" ]; then
+      echo "Secure Input: on, owner PID $pid: $line"
+    else
+      echo "Secure Input: on, owner PID $pid is not in ps output"
+    fi
+    return 0
+  fi
+
+  echo "Secure Input is ON."
+  echo "Owner PID from IOConsoleUsers: $pid"
+  echo ""
+
+  if [ -n "$line" ]; then
+    echo "Owner process:"
+    echo "  $line"
+    echo ""
+    echo "Parent chain:"
+    parent_chain "$pid"
+    echo ""
+    case "$line" in
+      *"/loginwindow.app/"*|*" loginwindow "*)
+        echo "Interpretation:"
+        echo "  Secure Input is held by loginwindow, so there is no normal app window"
+        echo "  for AeroSpace to find. Try lock/unlock first; if it remains stuck,"
+        echo "  log out or restart to reset the login session."
+        ;;
+      *)
+        echo "Interpretation:"
+        echo "  Close password fields, auth dialogs, terminal password prompts, or"
+        echo "  credential-provider popovers owned by this process. If it remains stuck,"
+        echo "  quitting that app is the cleanest way to make it release Secure Input."
+        ;;
+    esac
+  else
+    echo "No live process with PID $pid appears in ps output."
+    echo "That usually means the process exited without clearing Secure Input,"
+    echo "or the value is stale in the current login session. Lock/unlock may clear"
+    echo "it; otherwise log out or restart to reset the session."
+  fi
+
+  comm="$(process_comm "$pid")"
+  if [ -n "$comm" ]; then
+    echo ""
+    echo "AeroSpace windows matching the process name, if any:"
+    if ! aerospace_windows_for_comm "$comm"; then
+      echo "  none"
+    fi
+  fi
+
+  echo ""
+  echo "Current IOHID clients, for context:"
+  hid_clients || true
+}
+
+watch_report() {
+  local interval="${1:-1}" last="" pid stamp line
+  echo "Watching Secure Input owner every ${interval}s. Press Ctrl-C to stop."
+  while true; do
+    pid="$(secure_input_pid)"
+    [ -n "$pid" ] || pid="0"
+    if [ "$pid" != "$last" ]; then
+      stamp="$(/bin/date '+%Y-%m-%d %H:%M:%S')"
+      if [ "$pid" = "0" ]; then
+        echo "$stamp Secure Input off"
+      else
+        line="$(process_line "$pid")"
+        if [ -n "$line" ]; then
+          echo "$stamp Secure Input PID $pid: $line"
+        else
+          echo "$stamp Secure Input PID $pid: not in ps output"
+        fi
+      fi
+      last="$pid"
+    fi
+    /bin/sleep "$interval"
+  done
+}
+
+case "${1:-}" in
+  --help|-h)
+    usage
+    ;;
+  --brief)
+    report_once brief
+    ;;
+  --watch)
+    watch_report "${2:-1}"
+    ;;
+  "")
+    report_once full
+    ;;
+  *)
+    echo "secure_input_report.sh: unknown argument '$1'" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
+SECURE_INPUT_EOF
+
+  chmod +x "$SECURE_INPUT_HELPER"
+  success "secure input helper written to $SECURE_INPUT_HELPER"
+}
+
+# =============================================================================
 # AEROSPACE LOGIN STARTER
 # Starts AeroSpace at login without hiding/suspending the app. AeroSpace's own
 # start-at-login setting is still enabled, but this gives the generated setup an
@@ -2667,7 +2949,6 @@ write_aerospace_start_agent() {
   <array>
     <string>/usr/bin/open</string>
     <string>-g</string>
-    <string>-a</string>
     <string>/Applications/AeroSpace.app</string>
   </array>
   <key>RunAtLoad</key>
@@ -2802,7 +3083,7 @@ sketchybar --default \
   background.border_width=0
 
 # ── Load items ────────────────────────────────────────────────────────────
-for item in space.1 space.2 space.3 space.4 space.5 space.6 space.7 space.8 space.9 space.0 spaces_separator front_app monitor; do
+for item in space.1 space.2 space.3 space.4 space.5 space.6 space.7 space.8 space.9 space.0 spaces_separator front_app monitor display_reload; do
   sketchybar --remove "$item" >/dev/null 2>&1 || true
 done
 for slot in 0 1 2 3 4 5 6 7 8 9; do
@@ -2816,6 +3097,7 @@ done
 source "$CONFIG_DIR/items/spaces.sh"
 source "$CONFIG_DIR/items/front_app.sh"
 source "$CONFIG_DIR/items/monitor.sh"
+source "$CONFIG_DIR/items/display_reload.sh"
 
 # ── Finalise ──────────────────────────────────────────────────────────────
 sketchybar --update
@@ -2845,48 +3127,15 @@ export PEACH=0xfffab387           # peach
 COLORS_EOF
 
   # ── Space aliases ───────────────────────────────────────────────────────
-  # Labels apply across the single-digit monitor prefix used by workspace IDs.
+  # Labels are display-specific. Only slot 0, the built-in/main display, gets
+  # named workspaces by default; external displays keep numeric/app labels.
   cat > "$SKETCHY_DIR/space_aliases" << 'SPACE_ALIASES_EOF'
+01=Mail
 02=Msg
+03=Music
 04=Terms
 05=Editors
 06=Agents
-12=Msg
-14=Terms
-15=Editors
-16=Agents
-22=Msg
-24=Terms
-25=Editors
-26=Agents
-32=Msg
-34=Terms
-35=Editors
-36=Agents
-42=Msg
-44=Terms
-45=Editors
-46=Agents
-52=Msg
-54=Terms
-55=Editors
-56=Agents
-62=Msg
-64=Terms
-65=Editors
-66=Agents
-72=Msg
-74=Terms
-75=Editors
-76=Agents
-82=Msg
-84=Terms
-85=Editors
-86=Agents
-92=Msg
-94=Terms
-95=Editors
-96=Agents
 SPACE_ALIASES_EOF
 
   # ── Spaces (workspace indicators) ────────────────────────────────────────
@@ -2900,7 +3149,7 @@ slot=0
 while IFS= read -r monitor_id; do
   [ -n "$monitor_id" ] || continue
   [ "$slot" -gt 9 ] && break
-  display=$((slot + 1))
+  display=$(omarchy_sketchybar_display_for_slot "$slot" 2>/dev/null || printf '%s\n' $((slot + 1)))
   for sid in 1 2 3 4 5 6 7 8 9 0; do
     name="space.$slot.$sid"
     sketchybar --add item "$name" left \
@@ -2963,7 +3212,7 @@ slot=0
 while IFS= read -r monitor_id; do
   [ -n "$monitor_id" ] || continue
   [ "$slot" -gt 9 ] && break
-  display=$((slot + 1))
+  display=$(omarchy_sketchybar_display_for_slot "$slot" 2>/dev/null || printf '%s\n' $((slot + 1)))
   sketchybar --add item "monitor.$slot" right \
     --set "monitor.$slot" \
       display="$display" \
@@ -2980,6 +3229,18 @@ while IFS= read -r monitor_id; do
   slot=$((slot + 1))
 done <<< "$monitors"
 MONITOR_ITEM_EOF
+
+  cat > "$SKETCHY_DIR/items/display_reload.sh" << 'DISPLAY_RELOAD_ITEM_EOF'
+#!/usr/bin/env bash
+
+sketchybar --add event display_change >/dev/null 2>&1 || true
+sketchybar --add item display_reload center \
+  --set display_reload \
+    drawing=off \
+    updates=on \
+    script="$CONFIG_DIR/plugins/display_reload.sh" \
+  --subscribe display_reload display_change system_woke
+DISPLAY_RELOAD_ITEM_EOF
 
   # ── Right-side items: wifi, battery, clock ─────────────────────────────
   cat > "$SKETCHY_DIR/items/wifi.sh" << 'WIFI_ITEM_EOF'
@@ -3034,6 +3295,18 @@ source "$HOME/.config/aerospace/omarchy_space_state.sh"
 
 ALIAS_FILE="$HOME/.config/sketchybar/space_aliases"
 
+space_alias_label() {
+  local workspace="$1"
+  [ -f "$ALIAS_FILE" ] || return 1
+  awk -F= -v key="$workspace" '
+    $1 == key {
+      value = substr($0, index($0, "=") + 1)
+      print value
+      exit
+    }
+  ' "$ALIAS_FILE"
+}
+
 highlight_space() {
   local focused="$1"  # full workspace name, e.g. "23", or empty
   local focused_monitor focused_key
@@ -3078,10 +3351,11 @@ highlight_space() {
   # Build a single batched sketchybar invocation.
   local args=()
 
-  local slot=0 monitor_id visible_ws active_key
+  local slot=0 monitor_id display visible_ws active_key
   while IFS= read -r monitor_id; do
     [ -n "$monitor_id" ] || continue
     [ "$slot" -gt 9 ] && break
+    display=$(omarchy_sketchybar_display_for_slot "$slot" 2>/dev/null || printf '%s\n' $((slot + 1)))
 
     visible_ws=$("$OMARCHY_AEROSPACE_BIN" list-workspaces --monitor "$monitor_id" --visible --format '%{workspace}' 2>/dev/null | head -n 1)
     active_key=""
@@ -3093,28 +3367,43 @@ highlight_space() {
       active_key="$focused_key"
     fi
 
-    args+=(--set "monitor.$slot" label="$slot")
+    # Display changes can race with SketchyBar reloads. Make updates
+    # idempotently create missing slot items before setting labels.
+    sketchybar --add item "monitor.$slot" right >/dev/null 2>&1 || true
+    sketchybar --add item "spaces_separator.$slot" left >/dev/null 2>&1 || true
+    args+=(--set "monitor.$slot" display="$display" label="$slot"
+           --set "spaces_separator.$slot" display="$display" icon="|" label.drawing=off)
 
     for KEY in 1 2 3 4 5 6 7 8 9 0; do
       local ws_name="${slot}${KEY}"
       local name="space.$slot.$KEY"
-      local label legacy_ws
+      local label legacy_ws apps alias
       legacy_ws=""
       [ "$visible_ws" = "$KEY" ] && legacy_ws="$KEY"
-      label=$(printf '%s\n' "$windows" \
+      apps=$(printf '%s\n' "$windows" \
         | awk -F'|' -v s="$ws_name" -v legacy="$legacy_ws" '$1==s || (legacy != "" && $1==legacy){print $2}' \
         | sort -u | paste -sd "," - | sed 's/,/, /g')
-      local has_content="$label"
+      alias=$(space_alias_label "$ws_name" 2>/dev/null || true)
+      if [ -n "$alias" ]; then
+        label="$alias"
+      else
+        label="$apps"
+      fi
+      local has_content="$apps"
       local active_label_color=$TEXT
       local idle_label_color=$SUBTEXT
+      sketchybar --add item "$name" left >/dev/null 2>&1 || true
       if [ -z "$has_content" ]; then
-        label="[empty]"
-        active_label_color=$YELLOW
-        idle_label_color=$YELLOW
+        if [ -z "$alias" ]; then
+          label="[empty]"
+          active_label_color=$YELLOW
+          idle_label_color=$YELLOW
+        fi
       fi
 
       if [ "$KEY" = "$active_key" ]; then
         args+=(--set "$name"
+          display="$display"
           icon.font="SF Pro:Bold:12.0"
           icon.color=$BLUE
           label="$label"
@@ -3128,6 +3417,7 @@ highlight_space() {
         local idle_icon_color=$SUBTEXT
         [ -n "$has_content" ] && idle_icon_color=$MAUVE
         args+=(--set "$name"
+          display="$display"
           icon.font="SF Pro:Regular:12.0"
           icon.color=$idle_icon_color
           label="$label"
@@ -3180,6 +3470,25 @@ STATE_FILE="${XDG_RUNTIME_DIR:-/tmp}/omarchy_sketchybar_visible"
 sketchybar --bar hidden=on
 printf '0' > "$STATE_FILE"
 HIDE_BAR_PLUGIN_EOF
+
+  cat > "$SKETCHY_DIR/plugins/display_reload.sh" << 'DISPLAY_RELOAD_PLUGIN_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+LOCK_DIR="${TMPDIR:-/tmp}/omarchy_sketchybar_display_reload.lock"
+LOG_FILE="${OMARCHY_WINDOW_STATE_LOG:-/tmp/omarchy_window_state.log}"
+
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  exit 0
+fi
+
+(
+  sleep 1
+  printf '[%s] sketchybar display topology changed; reloading\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" >> "$LOG_FILE" 2>/dev/null || true
+  sketchybar --reload >/dev/null 2>&1 || true
+  rm -rf "$LOCK_DIR"
+) >/dev/null 2>&1 &
+DISPLAY_RELOAD_PLUGIN_EOF
 
   cat > "$SKETCHY_DIR/plugins/front_app.sh" << 'FRONTAPP_PLUGIN_EOF'
 #!/usr/bin/env bash
@@ -3284,6 +3593,10 @@ let chromeBundleID = "com.google.Chrome"
 let scanOrder: [String] = ["1","2","3","4","5","6","7","8","9","0"]
 let aerospaceStartupAttempts = 60
 let windowListingAttempts = 60
+let tmpDir = ProcessInfo.processInfo.environment["TMPDIR"] ?? "/tmp"
+let restoreGuardPath = ProcessInfo.processInfo.environment["OMARCHY_WINDOW_RESTORE_GUARD"] ?? "\(tmpDir)/omarchy_window_state_restore_active"
+let startupRestoreGuardPath = ProcessInfo.processInfo.environment["OMARCHY_WINDOW_STARTUP_RESTORE_GUARD"] ?? "\(tmpDir)/omarchy_window_state_startup_restore_active"
+let partialRestoreGuardPath = ProcessInfo.processInfo.environment["OMARCHY_WINDOW_PARTIAL_RESTORE_GUARD"] ?? "\(tmpDir)/omarchy_window_state_restore_incomplete"
 
 func log(_ msg: String) {
     let stamp = ISO8601DateFormatter().string(from: Date())
@@ -3337,6 +3650,13 @@ func waitForAerospace() -> Bool {
     return false
 }
 
+func restoreActive() -> Bool {
+    let fm = FileManager.default
+    return fm.fileExists(atPath: restoreGuardPath)
+        || fm.fileExists(atPath: startupRestoreGuardPath)
+        || fm.fileExists(atPath: partialRestoreGuardPath)
+}
+
 func activeMonitorSlotCount() -> Int {
     let out = sh(["list-monitors", "--format", "%{monitor-id}"])
         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3357,6 +3677,10 @@ func firstEmptyOnMonitor(_ monitor: String, skip currentWs: String) -> String? {
 func handleNewWindow(_ wid: CGWindowID) {
     guard waitForAerospace() else {
         log("Chrome window \(wid): AeroSpace was not reachable; leaving in place")
+        return
+    }
+    if restoreActive() {
+        log("Chrome window \(wid): restore is active or incomplete; leaving in place")
         return
     }
 
@@ -3629,6 +3953,8 @@ usage() {
   echo "                         restore the saved window/workspace layout now"
   echo "  ./install.sh shortcuts-widget"
   echo "                         regenerate the desktop shortcut image"
+  echo "  ./install.sh secure-input [--watch [seconds]]"
+  echo "                         show the macOS Secure Input owner"
   echo "  ./install.sh revert    undo everything, restore previous state"
   echo "  ./install.sh status    show install and service status"
   echo ""
@@ -3641,6 +3967,7 @@ case "${1:-}" in
   save-window-state) cmd_save_window_state ;;
   restore-window-state) cmd_restore_window_state ;;
   shortcuts-widget) cmd_shortcuts_widget ;;
+  secure-input)  cmd_secure_input  "$@" ;;
   revert)        cmd_revert        ;;
   status)        cmd_status        ;;
   *)             usage; exit 1     ;;

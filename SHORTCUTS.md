@@ -89,6 +89,17 @@ split width falls below 640 points per window.
 | ⌥ + Shift + R | Reload Aerospace config |
 | ⌥ + Shift + C | Reload skhd config |
 
+## Diagnostics
+
+Secure Input can prevent AeroSpace and skhd from receiving global keyboard
+events. Use a terminal for this diagnostic because a shortcut may not fire while
+Secure Input is active.
+
+```sh
+./install.sh secure-input
+./install.sh secure-input --watch
+```
+
 ## Bar
 
 | Shortcut | Action |

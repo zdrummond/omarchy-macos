@@ -23,6 +23,19 @@ Check status:
 ./install.sh status
 ```
 
+Diagnose macOS Secure Input when global hotkeys stop firing:
+
+```sh
+./install.sh secure-input
+./install.sh secure-input --watch
+```
+
+Secure Input is a macOS session-level keyboard privacy mode. When it is stuck,
+AeroSpace and skhd shortcuts can appear disabled because macOS stops other
+processes from observing global keyboard input. The diagnostic reports the
+current owner PID, process details, parent chain, and matching AeroSpace windows
+when there are any.
+
 Regenerate and restart the desktop shortcut cheatsheet widget:
 
 ```sh
