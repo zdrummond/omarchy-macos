@@ -235,6 +235,7 @@ cmd_save_window_state() {
   header "omarchy-macos save window state"
   write_window_state_helper
   "$WINDOW_STATE_WRAPPER" save
+  "$HOME/.config/sketchybar/plugins/restore_status.sh" complete >/dev/null 2>&1 || true
 }
 
 cmd_restore_window_state() {
@@ -821,7 +822,8 @@ workspace_force_assignment_toml() {
   local slot key monitor_pattern fallback_pattern
   printf '[workspace-to-monitor-force-assignment]\n'
   for slot in 1 2 3; do
-    monitor_pattern="${external_ids[$((slot - 1))]:-$((slot + 1))}"
+    monitor_pattern="${external_ids[$((slot - 1))]:-}"
+    [ -n "$monitor_pattern" ] || continue
     fallback_pattern="$monitor_pattern"
     [ "$slot" = "1" ] && fallback_pattern="secondary"
     for key in 0 1 2 3 4 5 6 7 8 9; do
@@ -861,8 +863,8 @@ enable-normalization-flatten-containers = true
 enable-normalization-opposite-orientation-for-nested-containers = true
 
 # ── Workspace monitor assignment ──────────────────────────────────────────
-# AeroSpace assigns empty workspaces to the main monitor by default. External
-# slot assignments make 10-39 native to up to three external displays without
+# AeroSpace assigns empty workspaces to the main monitor by default. Attached
+# external slot assignments make 10-39 native to up to three external displays without
 # forcing the built-in display back to a default slot-0 workspace.
 ${workspace_force_assignments}
 
@@ -1455,11 +1457,16 @@ RESPONSIVE_LAYOUT_EOF
 
   cat > "$AEROSPACE_DIR/repair_spaces.sh" << 'REPAIR_SPACES_EOF'
 #!/usr/bin/env bash
-# Move windows from detached monitor-prefixed workspaces back to slot 0.
+# Repair workspace placement after monitor topology changes.
 
 set -euo pipefail
 
 source "$HOME/.config/aerospace/omarchy_space_state.sh"
+
+REPAIR_APP_ASSIGNMENTS=1
+if [ "${1:-}" = "--detached-only" ]; then
+  REPAIR_APP_ASSIGNMENTS=0
+fi
 
 for _ in {1..30}; do
   if omarchy_aerospace_available; then
@@ -1475,7 +1482,9 @@ fi
 
 for _ in {1..6}; do
   omarchy_repair_detached_monitor_workspaces || true
-  omarchy_repair_app_assigned_workspaces || true
+  if [ "$REPAIR_APP_ASSIGNMENTS" = "1" ]; then
+    omarchy_repair_app_assigned_workspaces || true
+  fi
   sleep 2
 done
 REPAIR_SPACES_EOF
@@ -1490,18 +1499,32 @@ set -euo pipefail
 
 TMP_ROOT="${TMPDIR:-/tmp}"
 STARTUP_RESTORE_GUARD="${OMARCHY_WINDOW_STARTUP_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_startup_restore_active}"
-DEBOUNCED_SAVER="$HOME/.config/aerospace/window_state_debounced_save.sh"
+PARTIAL_RESTORE_GUARD="${OMARCHY_WINDOW_PARTIAL_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_restore_incomplete}"
+RESTORE_STATUS_HELPER="$HOME/.config/sketchybar/plugins/restore_status.sh"
+RESTORE_RESULT="complete"
+
+restore_status() {
+  [ -x "$RESTORE_STATUS_HELPER" ] || return 0
+  "$RESTORE_STATUS_HELPER" "$1" >/dev/null 2>&1 || true
+}
 
 cleanup() {
   rm -f "$STARTUP_RESTORE_GUARD"
-  "$DEBOUNCED_SAVER" "post-startup-restore" >/dev/null 2>&1 || true
+  if [ "$RESTORE_RESULT" = "incomplete" ] || [ -e "$PARTIAL_RESTORE_GUARD" ]; then
+    restore_status incomplete
+  else
+    restore_status complete
+  fi
 }
 trap cleanup EXIT
 
 printf '%s\n' "$$" > "$STARTUP_RESTORE_GUARD"
+restore_status active
 "$HOME/.config/aerospace/repair_spaces.sh" || true
-"$HOME/.config/aerospace/window_state.sh" restore || true
-"$HOME/.config/aerospace/repair_spaces.sh" || true
+OMARCHY_WINDOW_RESTORE_ATTEMPTS="${OMARCHY_STARTUP_WINDOW_RESTORE_ATTEMPTS:-30}" \
+OMARCHY_WINDOW_RESTORE_DELAY="${OMARCHY_STARTUP_WINDOW_RESTORE_DELAY:-1}" \
+  "$HOME/.config/aerospace/window_state.sh" restore || RESTORE_RESULT="incomplete"
+"$HOME/.config/aerospace/repair_spaces.sh" --detached-only || true
 STARTUP_RESTORE_EOF
 
   chmod +x "$AEROSPACE_DIR/startup_restore.sh"
@@ -1719,11 +1742,7 @@ sub prepare_windows_for_save {
     my (@windows) = @_;
     for my $window (@windows) {
         $window->{raw_workspace} = $window->{workspace} || "";
-        my $assigned = assigned_workspace($window);
-        $window->{target_workspace} = defined($assigned) ? $assigned : ($window->{raw_workspace} || "");
-        if (defined($assigned) && ($window->{raw_workspace} || "") ne $assigned) {
-            log_msg("recorded rule target for $window->{app_name} / $window->{app_bundle_id}: $window->{raw_workspace} -> $assigned");
-        }
+        $window->{target_workspace} = $window->{raw_workspace} || "";
     }
     return @windows;
 }
@@ -1779,7 +1798,6 @@ sub save_state {
     if ($existing && ($existing->{format_version} || 1) == 2 && ref($existing->{snapshots}) eq "HASH") {
         $snapshots = $existing->{snapshots};
     }
-
     my $key = $topology->{key};
     my $previous = $snapshots->{$key};
     my @history = ref($previous->{history}) eq "ARRAY" ? @{$previous->{history}} : ();
@@ -1845,13 +1863,11 @@ sub remap_workspace {
 
 sub target_workspace {
     my ($saved, $snapshot, $current_topology, $exact_topology) = @_;
-    my $base = assigned_workspace($saved)
-        || $saved->{target_workspace}
+    my $base = $saved->{raw_workspace}
         || $saved->{workspace}
-        || $saved->{raw_workspace}
+        || $saved->{target_workspace}
         || "";
     return "" unless length $base;
-    return $base if defined assigned_workspace($saved);
 
     if (!$snapshot || !ref($snapshot->{topology}) || (($snapshot->{format_version} || 1) < 2 && !ref($snapshot->{topology}))) {
         return target_workspace_v1($base, monitor_count($current_topology));
@@ -1976,11 +1992,7 @@ sub selected_snapshot {
 }
 
 sub schedule_post_restore_save {
-    return unless -x $debounced_saver;
-    my $pid = fork();
-    return unless defined $pid && $pid == 0;
-    exec($debounced_saver, "post-restore");
-    exit 0;
+    return 0;
 }
 
 sub restore_state_inner {
@@ -2104,7 +2116,6 @@ sub restore_state {
     die $err if $err;
     if ($complete) {
         unlink $partial_restore_guard;
-        schedule_post_restore_save();
     } else {
         if (open my $fh, ">", $partial_restore_guard) {
             print {$fh} timestamp() . "\n";
@@ -3084,7 +3095,7 @@ sketchybar --default \
   background.border_width=0
 
 # ── Load items ────────────────────────────────────────────────────────────
-for item in space.1 space.2 space.3 space.4 space.5 space.6 space.7 space.8 space.9 space.0 spaces_separator front_app monitor display_reload; do
+for item in space.1 space.2 space.3 space.4 space.5 space.6 space.7 space.8 space.9 space.0 spaces_separator front_app monitor display_reload restore_status; do
   sketchybar --remove "$item" >/dev/null 2>&1 || true
 done
 for slot in 0 1 2 3 4 5 6 7 8 9; do
@@ -3099,6 +3110,7 @@ source "$CONFIG_DIR/items/spaces.sh"
 source "$CONFIG_DIR/items/front_app.sh"
 source "$CONFIG_DIR/items/monitor.sh"
 source "$CONFIG_DIR/items/display_reload.sh"
+source "$CONFIG_DIR/items/restore_status.sh"
 
 # ── Finalise ──────────────────────────────────────────────────────────────
 sketchybar --update
@@ -3242,6 +3254,28 @@ sketchybar --add item display_reload center \
     script="$CONFIG_DIR/plugins/display_reload.sh" \
   --subscribe display_reload display_change system_woke
 DISPLAY_RELOAD_ITEM_EOF
+
+  cat > "$SKETCHY_DIR/items/restore_status.sh" << 'RESTORE_STATUS_ITEM_EOF'
+#!/usr/bin/env bash
+source "$CONFIG_DIR/colors.sh"
+
+sketchybar --add item restore_status center \
+  --set restore_status \
+    drawing=off \
+    updates=off \
+    icon.drawing=off \
+    label.font="SF Pro:Semibold:13.0" \
+    label.color=$YELLOW \
+    background.drawing=on \
+    background.color=$ITEM_BG \
+    background.border_color=$YELLOW \
+    background.border_width=1 \
+    background.corner_radius=6 \
+    background.height=24 \
+    padding_left=8 \
+    padding_right=8 \
+    script="$CONFIG_DIR/plugins/restore_status.sh"
+RESTORE_STATUS_ITEM_EOF
 
   # ── Right-side items: wifi, battery, clock ─────────────────────────────
   cat > "$SKETCHY_DIR/items/wifi.sh" << 'WIFI_ITEM_EOF'
@@ -3502,6 +3536,45 @@ set -euo pipefail
 
 LOCK_DIR="${TMPDIR:-/tmp}/omarchy_sketchybar_display_reload.lock"
 LOG_FILE="${OMARCHY_WINDOW_STATE_LOG:-/tmp/omarchy_window_state.log}"
+STATE_FILE="${TMPDIR:-/tmp}/omarchy_sketchybar_display_topology"
+MIN_RELOAD_INTERVAL="${OMARCHY_SKETCHYBAR_DISPLAY_RELOAD_INTERVAL:-15}"
+
+topology_signature() {
+  if command -v aerospace >/dev/null 2>&1; then
+    aerospace list-monitors --format '%{monitor-id}|%{monitor-name}|%{monitor-appkit-nsscreen-screens-id}' 2>/dev/null |
+      awk 'NF' |
+      sort |
+      paste -sd ';' -
+  fi
+}
+
+now_epoch() {
+  date '+%s'
+}
+
+current_signature="$(topology_signature)"
+[ -n "$current_signature" ] || exit 0
+
+previous_signature=""
+previous_epoch=0
+if [ -f "$STATE_FILE" ]; then
+  IFS='|' read -r previous_epoch previous_signature < "$STATE_FILE" || true
+fi
+
+if [ "$current_signature" = "$previous_signature" ]; then
+  exit 0
+fi
+
+current_epoch="$(now_epoch)"
+if [[ "$previous_epoch" =~ ^[0-9]+$ ]] && [ "$previous_epoch" -gt 0 ]; then
+  elapsed=$((current_epoch - previous_epoch))
+  if [ "$elapsed" -lt "$MIN_RELOAD_INTERVAL" ]; then
+    printf '%s|%s\n' "$current_epoch" "$current_signature" > "$STATE_FILE"
+    exit 0
+  fi
+fi
+
+printf '%s|%s\n' "$current_epoch" "$current_signature" > "$STATE_FILE"
 
 if ! mkdir "$LOCK_DIR" 2>/dev/null; then
   exit 0
@@ -3509,11 +3582,130 @@ fi
 
 (
   sleep 1
-  printf '[%s] sketchybar display topology changed; reloading\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" >> "$LOG_FILE" 2>/dev/null || true
+  printf '[%s] sketchybar display topology changed; reloading: %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$current_signature" >> "$LOG_FILE" 2>/dev/null || true
   sketchybar --reload >/dev/null 2>&1 || true
+  "$HOME/.config/sketchybar/plugins/restore_status.sh" refresh >/dev/null 2>&1 || true
   rm -rf "$LOCK_DIR"
 ) >/dev/null 2>&1 &
 DISPLAY_RELOAD_PLUGIN_EOF
+
+  cat > "$SKETCHY_DIR/plugins/restore_status.sh" << 'RESTORE_STATUS_PLUGIN_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_DIR="${CONFIG_DIR:-$HOME/.config/sketchybar}"
+if [ -f "$CONFIG_DIR/colors.sh" ]; then
+  source "$CONFIG_DIR/colors.sh"
+else
+  YELLOW=0xfff9e2af
+  RED=0xfff38ba8
+  ITEM_BG=0xff313244
+fi
+
+TMP_ROOT="${TMPDIR:-/tmp}"
+STARTUP_RESTORE_GUARD="${OMARCHY_WINDOW_STARTUP_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_startup_restore_active}"
+RESTORE_GUARD="${OMARCHY_WINDOW_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_restore_active}"
+PARTIAL_RESTORE_GUARD="${OMARCHY_WINDOW_PARTIAL_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_restore_incomplete}"
+VISIBLE_STATE="${XDG_RUNTIME_DIR:-/tmp}/omarchy_sketchybar_visible"
+PREVIOUS_STATE="${TMP_ROOT}/omarchy_restore_status_previous_bar"
+
+current_visible_state() {
+  if [ -f "$VISIBLE_STATE" ]; then
+    case "$(cat "$VISIBLE_STATE" 2>/dev/null || true)" in
+      1) printf '1\n'; return 0 ;;
+    esac
+  fi
+  printf '0\n'
+}
+
+remember_bar_state() {
+  [ -f "$PREVIOUS_STATE" ] && return 0
+  current_visible_state > "$PREVIOUS_STATE" 2>/dev/null || true
+}
+
+ensure_item() {
+  sketchybar --add item restore_status center >/dev/null 2>&1 || true
+}
+
+show_active() {
+  remember_bar_state
+  ensure_item
+  sketchybar --bar hidden=off topmost=window >/dev/null 2>&1 || true
+  printf '1' > "$VISIBLE_STATE" 2>/dev/null || true
+  sketchybar --set restore_status \
+    drawing=on \
+    icon.drawing=off \
+    label="Restoring windows" \
+    label.color=$YELLOW \
+    background.drawing=on \
+    background.color=$ITEM_BG \
+    background.border_color=$YELLOW \
+    background.border_width=1 \
+    background.corner_radius=6 \
+    background.height=24 >/dev/null 2>&1 || true
+}
+
+show_incomplete() {
+  remember_bar_state
+  ensure_item
+  sketchybar --bar hidden=off topmost=window >/dev/null 2>&1 || true
+  printf '1' > "$VISIBLE_STATE" 2>/dev/null || true
+  sketchybar --set restore_status \
+    drawing=on \
+    icon.drawing=off \
+    label="Restore incomplete" \
+    label.color=$RED \
+    background.drawing=on \
+    background.color=$ITEM_BG \
+    background.border_color=$RED \
+    background.border_width=1 \
+    background.corner_radius=6 \
+    background.height=24 >/dev/null 2>&1 || true
+}
+
+restore_bar_state() {
+  local previous="0"
+  if [ -f "$PREVIOUS_STATE" ]; then
+    previous="$(cat "$PREVIOUS_STATE" 2>/dev/null || printf '0')"
+  fi
+  rm -f "$PREVIOUS_STATE"
+  if [ "$previous" = "1" ]; then
+    sketchybar --bar hidden=off topmost=window >/dev/null 2>&1 || true
+    printf '1' > "$VISIBLE_STATE" 2>/dev/null || true
+  else
+    sketchybar --bar hidden=on >/dev/null 2>&1 || true
+    printf '0' > "$VISIBLE_STATE" 2>/dev/null || true
+  fi
+}
+
+show_complete() {
+  ensure_item
+  sketchybar --set restore_status drawing=off >/dev/null 2>&1 || true
+  restore_bar_state
+}
+
+mode="${1:-refresh}"
+case "$mode" in
+  active|start)
+    show_active
+    ;;
+  incomplete|failed)
+    show_incomplete
+    ;;
+  complete|done)
+    show_complete
+    ;;
+  refresh|*)
+    if [ -e "$STARTUP_RESTORE_GUARD" ] || [ -e "$RESTORE_GUARD" ]; then
+      show_active
+    elif [ -e "$PARTIAL_RESTORE_GUARD" ]; then
+      show_incomplete
+    else
+      show_complete
+    fi
+    ;;
+esac
+RESTORE_STATUS_PLUGIN_EOF
 
   cat > "$SKETCHY_DIR/plugins/front_app.sh" << 'FRONTAPP_PLUGIN_EOF'
 #!/usr/bin/env bash

@@ -204,7 +204,7 @@ run_restore
 assert_moves "301|07"
 
 write_monitors "1|Built-in Display"
-write_windows "401|09|Messages|com.apple.MobileSMS|Chat"
+write_windows "401|02|Messages|com.apple.MobileSMS|Chat"
 cat > "$STATE_FILE" <<'JSON'
 {
   "format_version": 2,
@@ -221,7 +221,7 @@ cat > "$STATE_FILE" <<'JSON'
 }
 JSON
 run_restore
-assert_moves "401|02"
+assert_moves "401|09"
 
 write_monitors "1|Built-in Display"
 write_windows "451|02|System Settings|com.apple.systempreferences|"
@@ -243,6 +243,26 @@ JSON
 run_restore
 assert_moves "451|04"
 [[ ! -e "$PARTIAL_GUARD_FILE" ]]
+
+write_monitors "1|Built-in Display" "2|DELL U2723QE"
+write_windows "461|04|iTerm2|com.googlecode.iterm2|Project"
+cat > "$STATE_FILE" <<'JSON'
+{
+  "format_version": 2,
+  "saved_at": "new",
+  "windows": [],
+  "snapshots": {
+    "0:built-in:Built-in Display||1:external:DELL U2723QE": {
+      "format_version": 2,
+      "saved_at": "right",
+      "topology": {"key":"0:built-in:Built-in Display||1:external:DELL U2723QE","monitor_count":2,"slot_names":["Built-in Display","DELL U2723QE"],"monitors":[]},
+      "windows": [{"window_id":461,"workspace":"10","raw_workspace":"10","target_workspace":"04","app_name":"iTerm2","app_bundle_id":"com.googlecode.iterm2","title":"Project"}]
+    }
+  }
+}
+JSON
+run_restore
+assert_moves "461|10"
 
 write_monitors "1|Built-in Display" "2|DELL U2723QE"
 write_windows \
@@ -296,7 +316,7 @@ assert_moves ""
 rm -f "$PARTIAL_GUARD_FILE"
 
 write_monitors "1|Built-in Display"
-write_windows "601|06|Zed|dev.zed.Zed|Project"
+write_windows "601|15|Zed|dev.zed.Zed|Project"
 cat > "$STATE_FILE" <<'JSON'
 {
   "format_version": 2,
@@ -318,6 +338,8 @@ run_save auto event
   die "missing current topology\n" unless $s->{snapshots}{"0:built-in:Built-in Display"};
   die "overwrote other topology\n" unless $s->{snapshots}{"0:built-in:Built-in Display||1:external:Studio Display"};
   die "expected two topologies\n" unless scalar(keys %{$s->{snapshots}}) == 2;
+  my ($z) = grep { $_->{app_bundle_id} eq "dev.zed.Zed" } @{$s->{snapshots}{"0:built-in:Built-in Display"}{windows}};
+  die "assigned app save did not preserve actual workspace\n" unless $z && $z->{target_workspace} eq "15";
 ' "$STATE_FILE"
 
 cp "$STATE_FILE" "$STATE_FILE.before"
@@ -365,5 +387,34 @@ write_windows \
 run_restore
 assert_moves "702|08"
 [[ ! -e "$PARTIAL_GUARD_FILE" ]]
+
+write_monitors "1|Built-in Display" "2|DELL U2723QE"
+write_windows "801|02|Google Chrome|com.google.Chrome|New Tab"
+cat > "$STATE_FILE" <<'JSON'
+{
+  "format_version": 2,
+  "saved_at": "stable",
+  "current_topology_key": "0:built-in:Built-in Display||1:external:DELL U2723QE",
+  "windows": [],
+  "snapshots": {
+    "0:built-in:Built-in Display||1:external:DELL U2723QE": {
+      "format_version": 2,
+      "saved_at": "stable",
+      "save_mode": "manual",
+      "save_reason": "manual",
+      "topology": {"key":"0:built-in:Built-in Display||1:external:DELL U2723QE","monitor_count":2,"slot_names":["Built-in Display","DELL U2723QE"],"monitors":[]},
+      "windows": [{"window_id":801,"target_workspace":"07","workspace":"07","raw_workspace":"07","app_name":"Google Chrome","app_bundle_id":"com.google.Chrome","title":"New Tab"}]
+    }
+  }
+}
+JSON
+cp "$STATE_FILE" "$STATE_FILE.before"
+touch "$STARTUP_GUARD_FILE"
+run_save auto startup-window-detected
+rm -f "$STARTUP_GUARD_FILE"
+cmp -s "$STATE_FILE.before" "$STATE_FILE"
+
+run_restore
+assert_moves "801|07"
 
 printf 'window_state_fake.sh: all checks passed\n'
