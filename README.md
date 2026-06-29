@@ -52,15 +52,20 @@ come back after reboot:
 ```
 
 The saved state is restored automatically at login/startup. Startup autosaves
-are held until restore finishes so login events cannot replace the pre-reboot
-snapshot. Windows without a saved location or explicit app rule stay where
-they are created so browser popups and transient dialogs are not moved out from
-under the app that opened them. Ordinary Chrome windows are the exception: new
-windows move to the first empty workspace on their monitor unless that
-workspace already contains Chrome. Chrome app wrappers such as the Gmail app
-are left unmanaged by app-name rules because their click handling is more
-sensitive than ordinary Chrome tabs. You can also replay the saved state
-manually:
+are held until restore finishes, and startup restore itself does not write a
+post-restore snapshot, so login events cannot replace the pre-reboot snapshot.
+SketchyBar temporarily shows `Restoring windows` while this is running. If some
+saved windows never appear, the bar stays visible with `Restore incomplete`;
+arrange the windows as desired and run `./install.sh save-window-state` to
+accept that layout and clear the warning.
+
+Windows without a saved location or explicit app rule stay where they are
+created so browser popups and transient dialogs are not moved out from under the
+app that opened them. Ordinary Chrome windows are the exception: new windows
+move to the first empty workspace on their monitor unless that workspace already
+contains Chrome. Chrome app wrappers such as the Gmail app are left unmanaged by
+app-name rules because their click handling is more sensitive than ordinary
+Chrome tabs. You can also replay the saved state manually:
 
 ```sh
 ./install.sh restore-window-state
@@ -71,6 +76,12 @@ current workspace. For window discovery, use
 `⌥+Up` for a readable all-window picker, `⌥+Shift+Up` for Mission Control /
 expose, `⌥+Ctrl+Tab` for the next window across all workspaces, and
 `⌥+Ctrl+Shift+Tab` for the previous window.
+
+Workspace shortcuts are monitor-scoped. The built-in display uses slot `0`, and
+attached external displays use slots `1`, `2`, and `3` in AeroSpace monitor
+order. SketchyBar shows a separate workspace set per display; named workspace
+aliases are used only for the built-in slot, while external displays show
+numeric/app labels.
 
 Revert the install:
 

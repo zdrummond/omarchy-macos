@@ -4,10 +4,15 @@ All shortcuts use **Option (⌥)** as the modifier key, mirroring the SUPER key 
 
 ## Workspaces
 
+Workspace shortcuts resolve against the monitor under the mouse, falling back to
+the focused monitor. The built-in display uses slot `0`; external displays use
+slots `1`, `2`, and `3` when attached. For example, `⌥+7` targets `07` on the
+built-in display and `17` on the first external display.
+
 | Shortcut | Action |
 |----------|--------|
-| ⌥ + 1–0 | Switch to workspace 1–10 |
-| ⌥ + Shift + 1–0 | Move focused window to workspace 1–10 |
+| ⌥ + 1–0 | Switch to workspace 1–10 on the current monitor |
+| ⌥ + Shift + 1–0 | Move focused window to workspace 1–10 on the current monitor |
 | ⌥ + Tab | Toggle back and forth between last workspace |
 | ⌥ + Shift + Tab | Move workspace to next monitor |
 | ⌥ + Ctrl + Tab | Focus next window across all workspaces |
