@@ -1111,6 +1111,9 @@ alt-l = 'focus right'
 # ── Window overview: ⌥ + Up ──────────────────────────────────────────────
 alt-up = 'exec-and-forget ~/.config/aerospace/window_picker.sh'
 
+# ── SketchyBar visibility toggle: ⌥ + z ─────────────────────────────────
+alt-z = 'exec-and-forget ~/.config/sketchybar/plugins/toggle_bar.sh'
+
 # ── Move window: ⌥ + Shift + h/j/k/l ─────────────────────────────────────
 # (mirrors Hyprland: SUPER + SHIFT + h/j/k/l)
 alt-shift-h = 'move left'
@@ -3406,9 +3409,6 @@ alt - p : screencapture -c
 # Native Mission Control is still available, but the normal all-window picker
 # is bound in AeroSpace as ⌥+Up so it follows the same input path as ⌥+h/j/k/l.
 alt + shift - up : open -a "Mission Control"
-
-# ── SketchyBar visibility toggle ──────────────────────────────────────────
-alt - z : ~/.config/sketchybar/plugins/toggle_bar.sh
 
 # ── Reload skhd config ────────────────────────────────────────────────────
 alt + shift - c : skhd --reload
