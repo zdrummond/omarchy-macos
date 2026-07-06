@@ -42,8 +42,7 @@ BORDERS_DIR="$HOME/.config/borders"
 BORDERS_INSTALLED_MARKER="$BACKUP_DIR/.borders-installed"
 BORDERS_SERVICE_PLIST="$HOME/Library/LaunchAgents/homebrew.mxcl.borders.plist"
 
-BAR_TOGGLE_LABEL="com.omarchy-macos.bar_toggle"
-BAR_TOGGLE_PLIST="$HOME/Library/LaunchAgents/$BAR_TOGGLE_LABEL.plist"
+BAR_TOGGLE_LABELS=("com.omarchy-macos.bar_toggle" "com.omarchy.bar-toggle")
 
 AEROSPACE_START_LABEL="com.omarchy-macos.aerospace_start"
 AEROSPACE_START_PLIST="$HOME/Library/LaunchAgents/$AEROSPACE_START_LABEL.plist"
@@ -78,8 +77,8 @@ MONITOR_FRAME_BIN="$AEROSPACE_DIR/monitor_frame"
 WINDOW_STATE_SAVE_INTERVAL_SECONDS=900
 WINDOW_STATE_SAVER_LABEL="com.omarchy-macos.window_state_saver"
 WINDOW_STATE_SAVER_PLIST="$HOME/Library/LaunchAgents/$WINDOW_STATE_SAVER_LABEL.plist"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SHORTCUT_IMAGE_SCRIPT="$SCRIPT_DIR/generate_shortcut_image.py"
+SHORTCUT_IMAGE_SRC="$AEROSPACE_DIR/shortcut_image.swift"
+SHORTCUT_IMAGE_BIN="$AEROSPACE_DIR/shortcut_image"
 SHORTCUT_IMAGE_OUTPUT="$HOME/Desktop/omarchy-shortcuts.png"
 
 INSTALLED_MARKER="$BACKUP_DIR/.installed"
@@ -263,21 +262,196 @@ cmd_accessibility() {
 write_shortcut_desktop_widget() {
   mkdir -p "$AEROSPACE_DIR" "$SHORTCUT_WIDGET_APP/Contents/MacOS" "$HOME/Library/LaunchAgents"
 
-  if [[ ! -f "$SHORTCUT_IMAGE_SCRIPT" ]]; then
-    warn "Shortcut widget generator not found at $SHORTCUT_IMAGE_SCRIPT"
-    return 0
-  fi
-  if ! command -v python3 &>/dev/null; then
-    warn "python3 not found — could not regenerate $SHORTCUT_IMAGE_OUTPUT"
-    return 0
-  fi
-  if ! python3 -c 'import PIL' >/dev/null 2>&1; then
-    warn "Python Pillow is not installed — could not regenerate $SHORTCUT_IMAGE_OUTPUT"
+  if ! command -v swiftc &>/dev/null; then
+    warn "swiftc not found — shortcut image and desktop widget were not built"
     return 0
   fi
 
+  cat > "$SHORTCUT_IMAGE_SRC" << 'SHORTCUT_IMAGE_SWIFT_EOF'
+import AppKit
+
+struct Row {
+    let key: String
+    let action: String
+}
+
+struct Section {
+    let title: String
+    let color: NSColor
+    let rows: [Row]
+}
+
+extension NSColor {
+    convenience init(rgb r: CGFloat, _ g: CGFloat, _ b: CGFloat, alpha: CGFloat = 1.0) {
+        self.init(calibratedRed: r / 255.0, green: g / 255.0, blue: b / 255.0, alpha: alpha)
+    }
+}
+
+let bg       = NSColor(rgb: 30, 30, 46)
+let surface  = NSColor(rgb: 49, 50, 68)
+let overlay  = NSColor(rgb: 69, 71, 90)
+let text     = NSColor(rgb: 205, 214, 244)
+let subtext  = NSColor(rgb: 166, 173, 200)
+let mauve    = NSColor(rgb: 203, 166, 247)
+let blue     = NSColor(rgb: 137, 180, 250)
+let green    = NSColor(rgb: 166, 227, 161)
+let peach    = NSColor(rgb: 250, 179, 135)
+let pink     = NSColor(rgb: 245, 194, 231)
+let yellow   = NSColor(rgb: 249, 226, 175)
+let teal     = NSColor(rgb: 148, 226, 213)
+let lavender = NSColor(rgb: 180, 190, 254)
+
+let fontSm = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+let fontMd = NSFont.monospacedSystemFont(ofSize: 16, weight: .regular)
+let fontLg = NSFont.monospacedSystemFont(ofSize: 22, weight: .bold)
+let fontTitle = NSFont.monospacedSystemFont(ofSize: 28, weight: .bold)
+let fontKey = NSFont.monospacedSystemFont(ofSize: 15, weight: .bold)
+
+let sections = [
+    Section(title: "Workspaces", color: mauve, rows: [
+        Row(key: "⌥ 1-9", action: "Switch workspace"),
+        Row(key: "⌥ ⇧ 1-9", action: "Move window"),
+        Row(key: "⌥ Tab", action: "Last workspace"),
+        Row(key: "⌥ ⇧ Tab", action: "Workspace -> monitor"),
+        Row(key: "⌥ ⌃ Tab", action: "Next window"),
+        Row(key: "⌥ ⌃ ⇧ Tab", action: "Previous window"),
+    ]),
+    Section(title: "Focus", color: blue, rows: [
+        Row(key: "⌥ H J K L", action: "Focus direction"),
+        Row(key: "⌥ ↑", action: "Window picker"),
+        Row(key: "⌥ ⇧ ↑", action: "Mission Control"),
+    ]),
+    Section(title: "Move", color: green, rows: [
+        Row(key: "⌥ ⇧ H J K L", action: "Move window"),
+        Row(key: "⌥ ⌃ ⇧ H / L", action: "Move monitor"),
+    ]),
+    Section(title: "Resize", color: peach, rows: [
+        Row(key: "⌥ ⌃ H / L", action: "Shrink / grow width"),
+        Row(key: "⌥ ⌃ K / J", action: "Shrink / grow height"),
+    ]),
+    Section(title: "Layout", color: pink, rows: [
+        Row(key: "⌥ F", action: "Fullscreen"),
+        Row(key: "⌥ E", action: "Toggle split direction"),
+        Row(key: "⌥ S", action: "Accordion (stacked)"),
+        Row(key: "auto", action: "Accordion when narrow"),
+        Row(key: "⌥ ⇧ Space", action: "Float / tile toggle"),
+        Row(key: "⌥ ⇧ Q", action: "Close window"),
+    ]),
+    Section(title: "Apps", color: yellow, rows: [
+        Row(key: "⌥ Return", action: "Terminal"),
+        Row(key: "⌥ ⇧ B", action: "Browser"),
+        Row(key: "⌥ ⇧ N", action: "Editor"),
+        Row(key: "⌥ ⇧ F", action: "Finder"),
+        Row(key: "⌥ ⇧ M", action: "Music"),
+        Row(key: "⌥ ⇧ G", action: "Chat"),
+        Row(key: "⌥ ⇧ /", action: "Passwords"),
+    ]),
+    Section(title: "Misc", color: teal, rows: [
+        Row(key: "⌥ ⇧ S", action: "Screenshot (region)"),
+        Row(key: "⌥ P", action: "Screenshot (full)"),
+        Row(key: "⌥ ⇧ R", action: "Reload Aerospace"),
+        Row(key: "⌥ ⇧ C", action: "Reload skhd"),
+        Row(key: "⌥ Space", action: "Raycast launcher"),
+    ]),
+]
+
+let colWidth: CGFloat = 340
+let padding: CGFloat = 30
+let sectionGap: CGFloat = 18
+let rowHeight: CGFloat = 26
+let headerHeight: CGFloat = 32
+let keyCol: CGFloat = 140
+
+var colHeights = [CGFloat](repeating: 0, count: 2)
+var colSections = [[Section]](repeating: [], count: 2)
+for section in sections {
+    let height = headerHeight + CGFloat(section.rows.count) * rowHeight + sectionGap
+    let target = colHeights[0] <= colHeights[1] ? 0 : 1
+    colSections[target].append(section)
+    colHeights[target] += height
+}
+
+let imageWidth = padding * 3 + colWidth * 2
+let imageHeight = (colHeights.max() ?? 0) + padding * 2 + 60
+let image = NSImage(size: NSSize(width: imageWidth, height: imageHeight))
+
+func attrs(font: NSFont, color: NSColor) -> [NSAttributedString.Key: Any] {
+    [.font: font, .foregroundColor: color]
+}
+
+func textSize(_ value: String, font: NSFont) -> NSSize {
+    (value as NSString).size(withAttributes: attrs(font: font, color: text))
+}
+
+func drawText(_ value: String, x: CGFloat, y: CGFloat, font: NSFont, color: NSColor) {
+    (value as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: attrs(font: font, color: color))
+}
+
+func fillRounded(_ rect: NSRect, radius: CGFloat, color: NSColor) {
+    color.setFill()
+    NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+}
+
+func fillRect(_ rect: NSRect, color: NSColor) {
+    color.setFill()
+    NSBezierPath(rect: rect).fill()
+}
+
+image.lockFocusFlipped(true)
+fillRounded(NSRect(x: 0, y: 0, width: imageWidth, height: imageHeight), radius: 16, color: bg)
+
+let title = "omarchy-macos shortcuts"
+let titleSize = textSize(title, font: fontTitle)
+drawText(title, x: (imageWidth - titleSize.width) / 2, y: padding - 5, font: fontTitle, color: lavender)
+
+let subtitle = "modifier: ⌥ Option"
+let subtitleSize = textSize(subtitle, font: fontSm)
+drawText(subtitle, x: (imageWidth - subtitleSize.width) / 2, y: padding + 28, font: fontSm, color: subtext)
+
+for col in 0..<2 {
+    let x = padding + CGFloat(col) * (colWidth + padding)
+    var y = padding + 60
+
+    for section in colSections[col] {
+        fillRounded(NSRect(x: x, y: y, width: colWidth, height: headerHeight - 4), radius: 6, color: surface)
+        fillRect(NSRect(x: x, y: y, width: 4, height: headerHeight - 4), color: section.color)
+        drawText(section.title, x: x + 14, y: y + 4, font: fontLg, color: section.color)
+        y += headerHeight + 2
+
+        for row in section.rows {
+            let keyWidth = min(textSize(row.key, font: fontKey).width + 16, keyCol - 8)
+            let badgeX = x + 8
+            fillRounded(NSRect(x: badgeX, y: y + 2, width: keyWidth, height: rowHeight - 4), radius: 4, color: overlay)
+            drawText(row.key, x: badgeX + 8, y: y + 2, font: fontKey, color: text)
+            drawText(row.action, x: x + keyCol + 8, y: y + 3, font: fontMd, color: subtext)
+            y += rowHeight
+        }
+
+        y += sectionGap
+    }
+}
+
+image.unlockFocus()
+
+guard let tiff = image.tiffRepresentation,
+      let rep = NSBitmapImageRep(data: tiff),
+      let png = rep.representation(using: .png, properties: [:]) else {
+    fputs("could not render shortcut image\n", stderr)
+    exit(1)
+}
+
+let output = NSString(string: NSHomeDirectory()).appendingPathComponent("Desktop/omarchy-shortcuts.png")
+do {
+    try png.write(to: URL(fileURLWithPath: output), options: .atomic)
+} catch {
+    fputs("could not write \(output): \(error)\n", stderr)
+    exit(1)
+}
+SHORTCUT_IMAGE_SWIFT_EOF
+
   info "Regenerating shortcut desktop image..."
-  python3 "$SHORTCUT_IMAGE_SCRIPT" >/dev/null
+  swiftc -O "$SHORTCUT_IMAGE_SRC" -o "$SHORTCUT_IMAGE_BIN"
+  "$SHORTCUT_IMAGE_BIN" >/dev/null
   success "Shortcut desktop image written to $SHORTCUT_IMAGE_OUTPUT"
 
   cat > "$SHORTCUT_WIDGET_SRC" << SHORTCUT_WIDGET_SWIFT_EOF
@@ -359,11 +533,6 @@ let delegate = AppDelegate()
 app.delegate = delegate
 app.run()
 SHORTCUT_WIDGET_SWIFT_EOF
-
-  if ! command -v swiftc &>/dev/null; then
-    warn "swiftc not found — shortcut image was generated, but desktop widget app was not built"
-    return 0
-  fi
 
   info "Compiling shortcut desktop widget..."
   swiftc -O "$SHORTCUT_WIDGET_SRC" -o "$SHORTCUT_WIDGET_BIN"
@@ -454,7 +623,7 @@ cmd_revert() {
   rm -rf "$BORDERS_DIR"
   rm -f "$AEROSPACE_START_PLIST"
   rm -f "$WINDOW_STATE_SAVER_PLIST"
-  rm -f "$BAR_TOGGLE_PLIST"
+  disable_bar_toggle_daemons
   rm -f "$CHROME_REHOME_PLIST"
   rm -f "$SHORTCUT_WIDGET_PLIST"
   rm -rf "$CHROME_REHOME_APP"
@@ -567,6 +736,17 @@ check_prerequisites() {
 
 borders_enabled() {
   [[ "${OMARCHY_ENABLE_BORDERS:-0}" =~ ^(1|true|yes|on)$ ]]
+}
+
+disable_bar_toggle_daemons() {
+  local label plist
+
+  for label in "${BAR_TOGGLE_LABELS[@]}"; do
+    plist="$HOME/Library/LaunchAgents/$label.plist"
+    launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || \
+      launchctl unload "$plist" 2>/dev/null || true
+    rm -f "$plist"
+  done
 }
 
 # =============================================================================
@@ -704,8 +884,7 @@ start_services() {
   fi
 
   info "Disabling bar_toggle daemon..."
-  launchctl unload "$BAR_TOGGLE_PLIST" 2>/dev/null || true
-  rm -f "$BAR_TOGGLE_PLIST"
+  disable_bar_toggle_daemons
 
   info "Starting chrome_rehome daemon..."
   launchctl unload "$CHROME_REHOME_PLIST" 2>/dev/null || true
@@ -728,9 +907,7 @@ stop_services() {
   if [[ -f "$WINDOW_STATE_SAVER_PLIST" ]]; then
     launchctl unload "$WINDOW_STATE_SAVER_PLIST" 2>/dev/null && info "  stopped window state saver" || true
   fi
-  if [[ -f "$BAR_TOGGLE_PLIST" ]]; then
-    launchctl unload "$BAR_TOGGLE_PLIST" 2>/dev/null && info "  stopped bar_toggle" || true
-  fi
+  disable_bar_toggle_daemons
   if [[ -f "$CHROME_REHOME_PLIST" ]]; then
     launchctl unload "$CHROME_REHOME_PLIST" 2>/dev/null && info "  stopped chrome_rehome" || true
   fi
@@ -4515,7 +4692,7 @@ usage() {
   echo "  ./omarchy.sh restore-window-state"
   echo "                         restore the saved window/workspace layout now"
   echo "  ./omarchy.sh shortcuts-widget"
-  echo "                         regenerate the desktop shortcut image"
+  echo "                         rebuild the desktop shortcut widget"
   echo "  ./omarchy.sh secure-input [--watch [seconds]]"
   echo "                         show the macOS Secure Input owner"
   echo "  ./omarchy.sh accessibility"
