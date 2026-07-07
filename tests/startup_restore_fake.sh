@@ -33,12 +33,25 @@ EOF
 cat > "$CONFIG_DIR/window_state.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ -e "$TMPDIR/omarchy_window_state_startup_restore_active" ]]
-printf 'restore\n' >> "$OMARCHY_TEST_LOG"
-printf 'restore-attempts:%s delay:%s\n' "${OMARCHY_WINDOW_RESTORE_ATTEMPTS:-missing}" "${OMARCHY_WINDOW_RESTORE_DELAY:-missing}" >> "$OMARCHY_TEST_LOG"
-if [ "${OMARCHY_FAIL_RESTORE:-0}" = "1" ]; then
-  exit 1
-fi
+case "${1:-missing}" in
+  restore)
+    [[ -e "$TMPDIR/omarchy_window_state_startup_restore_active" ]]
+    printf 'restore\n' >> "$OMARCHY_TEST_LOG"
+    printf 'restore-attempts:%s delay:%s\n' "${OMARCHY_WINDOW_RESTORE_ATTEMPTS:-missing}" "${OMARCHY_WINDOW_RESTORE_DELAY:-missing}" >> "$OMARCHY_TEST_LOG"
+    if [ "${OMARCHY_FAIL_RESTORE:-0}" = "1" ]; then
+      printf 'incomplete\n' > "$TMPDIR/omarchy_window_state_restore_incomplete"
+    fi
+    ;;
+  save)
+    [[ ! -e "$TMPDIR/omarchy_window_state_startup_restore_active" ]]
+    printf 'save:%s:%s\n' "${2:-missing-mode}" "${3:-missing-reason}" >> "$OMARCHY_TEST_LOG"
+    rm -f "$TMPDIR/omarchy_window_state_restore_incomplete"
+    ;;
+  *)
+    printf 'unexpected-window-state-command:%s\n' "${1:-missing}" >> "$OMARCHY_TEST_LOG"
+    exit 1
+    ;;
+esac
 EOF
 
 cat > "$CONFIG_DIR/window_state_debounced_save.sh" <<'EOF'
@@ -70,9 +83,26 @@ actual="$(cat "$LOG_FILE")"
 [[ ! -e "$GUARD_FILE" ]]
 
 : > "$LOG_FILE"
-OMARCHY_FAIL_RESTORE=1 "$CONFIG_DIR/startup_restore.sh"
+OMARCHY_FAIL_RESTORE=1 OMARCHY_STARTUP_INCOMPLETE_CLEAR_DELAY=0 "$CONFIG_DIR/startup_restore.sh"
 
-expected=$'status:active:guard=1:partial=0\nrepair\nrestore\nrestore-attempts:30 delay:1\nrepair-detached\nstatus:incomplete:guard=0:partial=0'
+expected=$'status:active:guard=1:partial=0\nrepair\nrestore\nrestore-attempts:30 delay:1\nrepair-detached\nstatus:incomplete:guard=0:partial=1'
+actual="$(cat "$LOG_FILE")"
+[[ "$actual" == "$expected" ]]
+[[ ! -e "$GUARD_FILE" ]]
+[[ -e "$PARTIAL_GUARD_FILE" ]]
+
+: > "$LOG_FILE"
+rm -f "$PARTIAL_GUARD_FILE"
+OMARCHY_FAIL_RESTORE=1 OMARCHY_STARTUP_INCOMPLETE_CLEAR_DELAY=1 OMARCHY_STARTUP_INCOMPLETE_CLEAR_ATTEMPTS=1 "$CONFIG_DIR/startup_restore.sh"
+
+for _ in {1..30}; do
+  if [[ ! -e "$PARTIAL_GUARD_FILE" ]] && grep -q 'status:complete' "$LOG_FILE"; then
+    break
+  fi
+  sleep 0.2
+done
+
+expected=$'status:active:guard=1:partial=0\nrepair\nrestore\nrestore-attempts:30 delay:1\nrepair-detached\nstatus:incomplete:guard=0:partial=1\nsave:manual:startup-incomplete-timeout\nstatus:complete:guard=0:partial=0'
 actual="$(cat "$LOG_FILE")"
 [[ "$actual" == "$expected" ]]
 [[ ! -e "$GUARD_FILE" ]]

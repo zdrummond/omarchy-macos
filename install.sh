@@ -1698,17 +1698,68 @@ TMP_ROOT="${TMPDIR:-/tmp}"
 STARTUP_RESTORE_GUARD="${OMARCHY_WINDOW_STARTUP_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_startup_restore_active}"
 PARTIAL_RESTORE_GUARD="${OMARCHY_WINDOW_PARTIAL_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_restore_incomplete}"
 RESTORE_STATUS_HELPER="$HOME/.config/sketchybar/plugins/restore_status.sh"
+WINDOW_STATE_HELPER="$HOME/.config/aerospace/window_state.sh"
+LOG_FILE="${OMARCHY_WINDOW_STATE_LOG:-/tmp/omarchy_window_state.log}"
+INCOMPLETE_CLEAR_DELAY="${OMARCHY_STARTUP_INCOMPLETE_CLEAR_DELAY:-180}"
+INCOMPLETE_CLEAR_ATTEMPTS="${OMARCHY_STARTUP_INCOMPLETE_CLEAR_ATTEMPTS:-6}"
+INCOMPLETE_CLEAR_RETRY_DELAY="${OMARCHY_STARTUP_INCOMPLETE_CLEAR_RETRY_DELAY:-5}"
+INCOMPLETE_SAVE_WAIT_ATTEMPTS="${OMARCHY_STARTUP_INCOMPLETE_SAVE_WAIT_ATTEMPTS:-6}"
 RESTORE_RESULT="complete"
+
+log_msg() {
+  printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >> "$LOG_FILE"
+}
 
 restore_status() {
   [ -x "$RESTORE_STATUS_HELPER" ] || return 0
   "$RESTORE_STATUS_HELPER" "$1" >/dev/null 2>&1 || true
 }
 
+schedule_incomplete_clear() {
+  case "$INCOMPLETE_CLEAR_DELAY" in
+    ''|*[!0-9]*)
+      log_msg "invalid startup incomplete clear delay: $INCOMPLETE_CLEAR_DELAY"
+      return 0
+      ;;
+  esac
+  [ "$INCOMPLETE_CLEAR_DELAY" -gt 0 ] || return 0
+  [ -e "$PARTIAL_RESTORE_GUARD" ] || return 0
+
+  (
+    sleep "$INCOMPLETE_CLEAR_DELAY"
+    [ -e "$PARTIAL_RESTORE_GUARD" ] || exit 0
+
+    attempts="$INCOMPLETE_CLEAR_ATTEMPTS"
+    retry_delay="$INCOMPLETE_CLEAR_RETRY_DELAY"
+    save_wait_attempts="$INCOMPLETE_SAVE_WAIT_ATTEMPTS"
+    case "$attempts" in ''|*[!0-9]*) attempts=6 ;; esac
+    case "$retry_delay" in ''|*[!0-9]*) retry_delay=5 ;; esac
+    case "$save_wait_attempts" in ''|*[!0-9]*) save_wait_attempts=6 ;; esac
+    [ "$attempts" -gt 0 ] || attempts=1
+
+    log_msg "startup restore incomplete grace period elapsed; saving current layout"
+    for ((attempt = 1; attempt <= attempts; attempt++)); do
+      if [ -x "$WINDOW_STATE_HELPER" ] && \
+        OMARCHY_WINDOW_SAVE_WAIT_ATTEMPTS="$save_wait_attempts" \
+          "$WINDOW_STATE_HELPER" save manual startup-incomplete-timeout >> "$LOG_FILE" 2>&1; then
+        restore_status complete
+        exit 0
+      fi
+      [ "$attempt" -lt "$attempts" ] || break
+      sleep "$retry_delay"
+    done
+
+    log_msg "startup restore incomplete clear save failed; clearing stale incomplete marker"
+    rm -f "$PARTIAL_RESTORE_GUARD"
+    restore_status complete
+  ) >/dev/null 2>&1 &
+}
+
 cleanup() {
   rm -f "$STARTUP_RESTORE_GUARD"
   if [ "$RESTORE_RESULT" = "incomplete" ] || [ -e "$PARTIAL_RESTORE_GUARD" ]; then
     restore_status incomplete
+    schedule_incomplete_clear
   else
     restore_status complete
   fi
