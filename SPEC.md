@@ -71,7 +71,7 @@ Default slot-0 app assignments:
 
 | Workspace | App(s) |
 |---|---|
-| 01 | Mail workspace; Gmail Chrome app windows |
+| 01 | Mail workspace; Gmail Chrome app windows; both Mail and Gmail are treated as assigned apps for repair and bar labels |
 | 02 (Msg) | Messages, Signal, Google Chat |
 | 03 | Spotify, Music |
 | 04 (Terms) | Ghostty, WezTerm, Warp, iTerm |

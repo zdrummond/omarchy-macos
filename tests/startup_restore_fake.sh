@@ -116,8 +116,8 @@ actual="$(cat "$LOG_FILE")"
     if $source =~ /\[\[on-window-detected\]\]\nrun = \['\''move-node-to-workspace 00'\''/s;
   die "unexpected Gmail app-name workspace rule\n"
     if $source =~ /if\.app-name-regex-substring = '\''Gmail'\''/;
-  die "unexpected Gmail canonical workspace assignment\n"
-    if $source =~ /return "01" if \$app =~ \/Gmail\/i;/;
+  die "missing Gmail shell workspace assignment\n"
+    unless $source =~ /\*Mail\*\|\*Gmail\*\) printf '\''01\\n'\''; return 0 ;;/;
   die "missing Google Chat window-detected assignment\n"
     unless $source =~ /if\.app-name-regex-substring = '\''Google Chat'\''\nrun = \['\''move-node-to-workspace 02'\'', '\''workspace 02'\''\]/;
   die "missing Google Chat canonical workspace assignment\n"

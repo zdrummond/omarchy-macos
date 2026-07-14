@@ -1519,7 +1519,7 @@ omarchy_assigned_workspace_for_app() {
   local bundle_id="$2"
 
   case "$app_name" in
-    *Mail*) printf '01\n'; return 0 ;;
+    *Mail*|*Gmail*) printf '01\n'; return 0 ;;
     *Messages*|*Signal*|*Google\ Chat*) printf '02\n'; return 0 ;;
     *Spotify*|*Music*) printf '03\n'; return 0 ;;
     *Ghostty*|*WezTerm*|*Warp*|*iTerm2*) printf '04\n'; return 0 ;;
