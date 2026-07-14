@@ -61,6 +61,7 @@ flattened="$(tr '\n' ' ' < "$LOG_FILE")"
 "$CONFIG_DIR/plugins/restore_status.sh" complete
 flattened="$(tr '\n' ' ' < "$LOG_FILE")"
 [[ "$flattened" == *"<--set>"*"<restore_status>"*"<drawing=off>"* ]]
+[[ "$flattened" == *"<--set>"*"<restore_status.0>"*"<drawing=off>"* ]]
 [[ "$flattened" == *"<--bar>"*"<hidden=on>"* ]]
 [[ "$(cat "$VISIBLE_STATE")" == "0" ]]
 [[ ! -e "$PREVIOUS_STATE" ]]

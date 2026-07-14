@@ -132,7 +132,9 @@ Default slot-0 app assignments:
   unverifiable components are reported as unknown instead of as false failures.
   The alert is normally event-driven; while an Accessibility warning is visible,
   a single temporary watcher checks every 30 seconds and exits once the warning
-  clears.
+  clears. Clearing the status must hide all restore-status items, including
+  per-monitor items like `restore_status.0`, even when AeroSpace monitor
+  discovery is temporarily unavailable.
 - **Window discovery** includes `⌥+Up` for a readable all-window picker,
   `⌥+Shift+Up` for Mission Control / expose, plus `⌥+Ctrl+Tab` and
   `⌥+Ctrl+Shift+Tab` to cycle through every AeroSpace-managed window across

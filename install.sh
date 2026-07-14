@@ -4159,6 +4159,7 @@ ensure_item() {
 
 set_status_items() {
   local label="$1" color="$2" row name display
+  hide_status_items
   while IFS='|' read -r name display; do
     [ -n "$name" ] || continue
     if [ -n "$display" ]; then
@@ -4179,11 +4180,11 @@ set_status_items() {
 }
 
 hide_status_items() {
-  local row name display
-  while IFS='|' read -r name display; do
-    [ -n "$name" ] || continue
-    sketchybar --set "$name" drawing=off >/dev/null 2>&1 || true
-  done <<< "$(status_items)"
+  local name
+  sketchybar --set restore_status drawing=off >/dev/null 2>&1 || true
+  for slot in {0..9}; do
+    sketchybar --set "restore_status.$slot" drawing=off >/dev/null 2>&1 || true
+  done
 }
 
 show_active() {
