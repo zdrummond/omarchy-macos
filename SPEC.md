@@ -80,6 +80,10 @@ Default slot-0 app assignments:
 | 00 | Steam |
 | current workspace | Apps without an explicit rule or restored saved location |
 
+Workspace `02` is reserved for messaging. During startup repair and restore,
+unassigned windows found on or saved to `02` are moved to `08` so a corrupted
+snapshot or login-time app launch cannot crowd the message workspace.
+
 ## Key Behaviors
 
 - **Focus changes do not warp the pointer.** Browser links and buttons must
@@ -105,7 +109,9 @@ Default slot-0 app assignments:
   canonical app assignments win over saved window state. For example, a stale
   or corrupted snapshot must not keep Gmail on `02`; Gmail belongs on `01`.
   Saved state still controls unassigned apps and ordinary app windows that do
-  not have an explicit workspace contract.
+  not have an explicit workspace contract, except that unassigned windows are
+  not allowed to occupy the reserved message workspace `02`; those restore or
+  repair to `08`.
 - **Workspace repair** migrates windows from detached monitor-prefixed workspaces back to slot `0`, migrates visible legacy single-digit workspaces like `2` to the active monitor's slot-prefixed workspace like `12`, and repins any visible two-digit workspace that is shown on the wrong monitor.
 - **SketchyBar** creates separate space items per monitor slot and scopes them
   to each SketchyBar display. Each bar shows only that monitor's workspace set;

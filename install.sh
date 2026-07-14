@@ -1544,7 +1544,11 @@ omarchy_repair_app_assigned_workspaces() {
   while IFS= read -r line; do
     IFS='|' read -r window_id workspace app_name bundle_id <<< "$line"
     [[ "$window_id" =~ ^[0-9]+$ ]] || continue
-    target=$(omarchy_assigned_workspace_for_app "$app_name" "$bundle_id" 2>/dev/null) || continue
+    target=$(omarchy_assigned_workspace_for_app "$app_name" "$bundle_id" 2>/dev/null || true)
+    if [ -z "$target" ] && [ "$workspace" = "02" ]; then
+      target="08"
+    fi
+    [ -n "$target" ] || continue
     [ "$workspace" = "$target" ] && continue
     "$OMARCHY_AEROSPACE_BIN" move-node-to-workspace --window-id "$window_id" "$target" >/dev/null 2>&1 || true
   done <<< "$rows"
@@ -2121,11 +2125,16 @@ sub target_workspace {
         || "";
     return "" unless length $base;
 
+    my $target;
     if (!$snapshot || !ref($snapshot->{topology}) || (($snapshot->{format_version} || 1) < 2 && !ref($snapshot->{topology}))) {
-        return target_workspace_v1($base, monitor_count($current_topology));
+        $target = target_workspace_v1($base, monitor_count($current_topology));
+    } elsif ($exact_topology) {
+        $target = $base;
+    } else {
+        $target = remap_workspace($base, $snapshot->{topology}, $current_topology);
     }
-    return $base if $exact_topology;
-    return remap_workspace($base, $snapshot->{topology}, $current_topology);
+    return "08" if $target eq "02" || $target eq "2";
+    return $target;
 }
 
 sub same {

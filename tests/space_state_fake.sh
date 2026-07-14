@@ -63,7 +63,7 @@ printf '%s\n' \
   "102|09|Messages|com.apple.MobileSMS" \
   "103|03|Music|com.apple.Music" \
   "104|08|Steam|com.valvesoftware.steam" \
-  "105|07|Bear|net.shinyfrog.bear" \
+  "105|02|Bear|net.shinyfrog.bear" \
   "106|05|Google Chat|com.google.Chrome.app.google-chat" \
   > "$WINDOWS_FILE"
 : > "$MOVES_FILE"
@@ -71,7 +71,7 @@ printf '%s\n' \
 source "$HELPER"
 omarchy_repair_app_assigned_workspaces
 
-expected=$'101|02\n102|02\n104|00\n106|02'
+expected=$'101|02\n102|02\n104|00\n105|08\n106|02'
 actual="$(cat "$MOVES_FILE")"
 if [[ "$actual" != "$expected" ]]; then
   printf 'expected moves:\n%s\nactual moves:\n%s\n' "$expected" "$actual" >&2
