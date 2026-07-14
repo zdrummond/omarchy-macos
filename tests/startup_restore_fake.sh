@@ -138,6 +138,10 @@ actual="$(cat "$LOG_FILE")"
     if $source =~ /\[\[on-window-detected\]\]\nrun = \['\''move-node-to-workspace 00'\''/s;
   die "unexpected Gmail app-name workspace rule\n"
     if $source =~ /if\.app-name-regex-substring = '\''Gmail'\''/;
+  die "missing Apple Mail window-detected assignment\n"
+    unless $source =~ /if\.app-id = '\''com\.apple\.mail'\''\nrun = \['\''move-node-to-workspace 01'\'', '\''workspace 01'\''\]/;
+  die "missing Gmail window-detected assignment\n"
+    unless $source =~ /if\.app-id = '\''com\.google\.Chrome\.app\.fmgjjmmmlfnkbppncabfkddbjimcfncm'\''\nrun = \['\''move-node-to-workspace 01'\'', '\''workspace 01'\''\]/;
   die "missing Gmail shell workspace assignment\n"
     unless $source =~ /\*Mail\*\|\*Gmail\*\) printf '\''01\\n'\''; return 0 ;;/;
   die "missing Google Chat window-detected assignment\n"

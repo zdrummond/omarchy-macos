@@ -1175,6 +1175,14 @@ check-further-callbacks = true
 # App-assignment rules default to monitor 0's spaces ("0N"). If a second
 # monitor is attached, move the app to <monitor><N> manually after launch.
 [[on-window-detected]]
+if.app-id = 'com.apple.mail'
+run = ['move-node-to-workspace 01', 'workspace 01']
+
+[[on-window-detected]]
+if.app-id = 'com.google.Chrome.app.fmgjjmmmlfnkbppncabfkddbjimcfncm'
+run = ['move-node-to-workspace 01', 'workspace 01']
+
+[[on-window-detected]]
 if.app-name-regex-substring = 'Messages'
 run = ['move-node-to-workspace 02', 'workspace 02']
 
