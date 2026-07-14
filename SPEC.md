@@ -14,6 +14,28 @@ Bring the [Omarchy](https://omarchy.org/) / Hyprland Linux tiling workflow to ma
   up from scratch; `./omarchy.sh revert` fully undoes it and restores prior
   configs from backup. `./install.sh` remains as a compatibility entry point
   and takes no action when run without a subcommand.
+- **The spec is the contract.** Changes to workspace assignment, startup
+  restore, automatic save behavior, live state files, keybindings, or service
+  startup must be checked against this spec before implementation. If behavior
+  changes, `SPEC.md` must be updated in the same change.
+
+## Change Discipline
+
+- Review this spec before making fundamental changes to restore/save logic,
+  workspace assignment, startup ordering, generated service files, or global
+  keybindings.
+- Prefer fake tests and generated-script syntax checks for validation. Do not
+  run live restore/save/repair commands against the user's current window state
+  unless the requested task requires it and the expected state impact is clear.
+- Never let a partial startup layout overwrite a known-good saved state. Login
+  and app-launch events are treated as unsafe until startup restore has either
+  completed or the bounded startup guard has expired.
+- Assigned workspaces are authoritative for their assigned apps. Saved window
+  state may refine placement for unassigned apps, but it must not move assigned
+  apps away from their canonical workspace.
+- When a restore/save bug affects live state, report the exact observed cause,
+  the commands that were run, the current guard-file state, and whether the
+  saved baseline was changed.
 
 ## Tool Stack
 
@@ -49,7 +71,7 @@ Default slot-0 app assignments:
 
 | Workspace | App(s) |
 |---|---|
-| 01 | Mail workspace; Gmail Chrome app windows are not force-managed |
+| 01 | Mail workspace; Gmail Chrome app windows |
 | 02 (Msg) | Messages, Signal, Google Chat |
 | 03 | Spotify, Music |
 | 04 (Terms) | Ghostty, WezTerm, Warp, iTerm |
@@ -67,14 +89,23 @@ Default slot-0 app assignments:
   app name, app bundle id, and title, to
   `~/.config/aerospace/omarchy_window_state.json`. A LaunchAgent refreshes that
   single snapshot every 15 minutes and performs one best-effort save when macOS
-  logs out or shuts down. On login/startup, `startup_restore.sh` blocks all
-  automatic saves before its first repair pass, waits for AeroSpace, repairs
-  detached-monitor workspaces, then replays the saved layout with a bounded
-  startup retry window. Matching prefers app identity and title before falling
-  back to app identity where that is unambiguous. Startup restore does not write
-  a post-restore snapshot, so login-time app creation and rule-based placement
-  cannot replace the pre-reboot state. Manual saves clear incomplete-restore
-  state after the user accepts the current layout.
+  logs out or shuts down. On login/startup, the window-state saver creates a
+  pending startup guard immediately, before window-detected events can save a
+  partial app-launch layout. `startup_restore.sh` then takes over that guard,
+  waits for AeroSpace, repairs detached-monitor workspaces, and replays the
+  saved layout with a bounded startup retry window. Matching prefers app
+  identity and title before falling back to app identity where that is
+  unambiguous. Startup restore does not write a post-restore snapshot, so
+  login-time app creation and rule-based placement cannot replace the
+  pre-reboot state. The pending startup guard has a bounded fail-open expiry so
+  automatic saves do not remain disabled forever if AeroSpace never runs the
+  startup restore command. Manual saves clear incomplete-restore state after
+  the user accepts the current layout.
+- **Assigned apps override saved stale placement.** During restore and repair,
+  canonical app assignments win over saved window state. For example, a stale
+  or corrupted snapshot must not keep Gmail on `02`; Gmail belongs on `01`.
+  Saved state still controls unassigned apps and ordinary app windows that do
+  not have an explicit workspace contract.
 - **Workspace repair** migrates windows from detached monitor-prefixed workspaces back to slot `0`, migrates visible legacy single-digit workspaces like `2` to the active monitor's slot-prefixed workspace like `12`, and repins any visible two-digit workspace that is shown on the wrong monitor.
 - **SketchyBar** creates separate space items per monitor slot and scopes them
   to each SketchyBar display. Each bar shows only that monitor's workspace set;
@@ -88,9 +119,11 @@ Default slot-0 app assignments:
 - **Status alert indicator** temporarily shows SketchyBar with
   `Restoring windows` during startup restore, then hides the indicator and
   restores the previous bar visibility when restore completes. If restore is
-  incomplete, the bar remains visible with `Restore incomplete` until the user
-  performs a manual save or the next successful restore clears the marker. When
-  no restore is active, the same alert item shows `AX: ...` if Omarchy can
+  incomplete, the bar remains visible with `Restore incomplete` while automatic
+  saves are blocked. After the startup grace period, the current layout is
+  saved as the accepted baseline and the incomplete marker is cleared; a manual
+  save or a later successful restore also clears it. When no restore is active,
+  the same alert item shows `AX: ...` if Omarchy can
   observe that a component's macOS Accessibility grant is stale. The same
   diagnosis is available from `./omarchy.sh accessibility`. Because macOS does
   not expose arbitrary processes' Accessibility trust to shell scripts, the
