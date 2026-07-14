@@ -4181,9 +4181,9 @@ set_status_items() {
 
 hide_status_items() {
   local name
-  sketchybar --set restore_status drawing=off >/dev/null 2>&1 || true
+  sketchybar --set restore_status drawing=off label="" background.drawing=off >/dev/null 2>&1 || true
   for slot in {0..9}; do
-    sketchybar --set "restore_status.$slot" drawing=off >/dev/null 2>&1 || true
+    sketchybar --set "restore_status.$slot" drawing=off label="" background.drawing=off >/dev/null 2>&1 || true
   done
 }
 
