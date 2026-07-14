@@ -221,7 +221,27 @@ cat > "$STATE_FILE" <<'JSON'
 }
 JSON
 run_restore
-assert_moves "401|09"
+assert_moves ""
+
+write_monitors "1|Built-in Display"
+write_windows "421|02|Gmail|com.google.Chrome.app.fmgjjmmmlfnkbppncabfkddbjimcfncm|"
+cat > "$STATE_FILE" <<'JSON'
+{
+  "format_version": 2,
+  "saved_at": "new",
+  "windows": [],
+  "snapshots": {
+    "0:built-in:Built-in Display": {
+      "format_version": 2,
+      "saved_at": "right",
+      "topology": {"key":"0:built-in:Built-in Display","monitor_count":1,"slot_names":["Built-in Display"],"monitors":[]},
+      "windows": [{"window_id":421,"target_workspace":"02","app_name":"Gmail","app_bundle_id":"com.google.Chrome.app.fmgjjmmmlfnkbppncabfkddbjimcfncm","title":""}]
+    }
+  }
+}
+JSON
+run_restore
+assert_moves "421|01"
 
 write_monitors "1|Built-in Display"
 write_windows "451|02|System Settings|com.apple.systempreferences|"
@@ -262,7 +282,7 @@ cat > "$STATE_FILE" <<'JSON'
 }
 JSON
 run_restore
-assert_moves "461|10"
+assert_moves ""
 
 write_monitors "1|Built-in Display" "2|DELL U2723QE"
 write_windows \

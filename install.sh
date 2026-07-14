@@ -1973,6 +1973,7 @@ sub assigned_workspace {
     my $app = $window->{app_name} || "";
     my $bundle = $window->{app_bundle_id} || "";
 
+    return "01" if $app =~ /Mail/i;
     return "02" if $app =~ /Messages|Signal|Google Chat/i;
     return "03" if $app =~ /Spotify|Music/i;
     return "04" if $app =~ /Ghostty|WezTerm|Warp|iTerm2/i;
@@ -2111,6 +2112,9 @@ sub remap_workspace {
 
 sub target_workspace {
     my ($saved, $snapshot, $current_topology, $exact_topology) = @_;
+    my $assigned = assigned_workspace($saved);
+    return $assigned if defined $assigned;
+
     my $base = $saved->{raw_workspace}
         || $saved->{workspace}
         || $saved->{target_workspace}
@@ -2423,6 +2427,7 @@ HELPER="$HOME/.config/aerospace/window_state.sh"
 LOG_FILE="${OMARCHY_WINDOW_STATE_LOG:-/tmp/omarchy_window_state.log}"
 DELAY="${OMARCHY_WINDOW_STATE_DEBOUNCE_SECONDS:-2}"
 SAVE_WAIT_ATTEMPTS="${OMARCHY_WINDOW_SAVE_WAIT_ATTEMPTS:-5}"
+PENDING_MAX_SECONDS="${OMARCHY_STARTUP_RESTORE_PENDING_MAX_SECONDS:-300}"
 TMP_ROOT="${TMPDIR:-/tmp}"
 LOCK_DIR="$TMP_ROOT/omarchy_window_state_debounced.lock"
 PENDING_FILE="$TMP_ROOT/omarchy_window_state_debounced.pending"
@@ -2434,7 +2439,22 @@ log_msg() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >> "$LOG_FILE"
 }
 
-if [[ -e "$RESTORE_GUARD" || -e "$STARTUP_RESTORE_GUARD" ]]; then
+startup_restore_active() {
+  [[ -e "$STARTUP_RESTORE_GUARD" ]] || return 1
+  if grep -q '^pending-window-state-saver$' "$STARTUP_RESTORE_GUARD" 2>/dev/null; then
+    case "$PENDING_MAX_SECONDS" in ''|*[!0-9]*) PENDING_MAX_SECONDS=300 ;; esac
+    modified="$(stat -f %m "$STARTUP_RESTORE_GUARD" 2>/dev/null || printf '0')"
+    now="$(date +%s)"
+    if [[ "$modified" =~ ^[0-9]+$ ]] && [ $((now - modified)) -ge "$PENDING_MAX_SECONDS" ]; then
+      log_msg "startup restore pending guard expired; allowing automatic saves"
+      rm -f "$STARTUP_RESTORE_GUARD"
+      return 1
+    fi
+  fi
+  return 0
+}
+
+if [[ -e "$RESTORE_GUARD" ]] || startup_restore_active; then
   log_msg "restore active; skipped debounced save request ($REASON)"
   exit 0
 fi
@@ -2452,7 +2472,7 @@ trap cleanup EXIT TERM INT HUP
 
 while true; do
   sleep "$DELAY"
-  if [[ -e "$RESTORE_GUARD" || -e "$STARTUP_RESTORE_GUARD" ]]; then
+  if [[ -e "$RESTORE_GUARD" ]] || startup_restore_active; then
     log_msg "restore active; skipped debounced save"
     rm -f "$PENDING_FILE"
     exit 0
@@ -2510,6 +2530,7 @@ HELPER="$WINDOW_STATE_WRAPPER"
 LOG_FILE="$WINDOW_STATE_LOG"
 INTERVAL="\${OMARCHY_WINDOW_STATE_SAVE_INTERVAL:-$WINDOW_STATE_SAVE_INTERVAL_SECONDS}"
 SAVE_WAIT_ATTEMPTS="\${OMARCHY_WINDOW_SAVE_WAIT_ATTEMPTS:-5}"
+PENDING_MAX_SECONDS="\${OMARCHY_STARTUP_RESTORE_PENDING_MAX_SECONDS:-300}"
 RESTORE_GUARD="\${OMARCHY_WINDOW_RESTORE_GUARD:-\${TMPDIR:-/tmp}/omarchy_window_state_restore_active}"
 STARTUP_RESTORE_GUARD="\${OMARCHY_WINDOW_STARTUP_RESTORE_GUARD:-\${TMPDIR:-/tmp}/omarchy_window_state_startup_restore_active}"
 sleep_pid=""
@@ -2518,13 +2539,34 @@ log_msg() {
   printf '[%s] %s\n' "\$(date '+%Y-%m-%dT%H:%M:%S%z')" "\$*" >> "\$LOG_FILE"
 }
 
+startup_restore_active() {
+  [[ -e "\$STARTUP_RESTORE_GUARD" ]] || return 1
+  if grep -q '^pending-window-state-saver$' "\$STARTUP_RESTORE_GUARD" 2>/dev/null; then
+    case "\$PENDING_MAX_SECONDS" in ''|*[!0-9]*) PENDING_MAX_SECONDS=300 ;; esac
+    modified="\$(stat -f %m "\$STARTUP_RESTORE_GUARD" 2>/dev/null || printf '0')"
+    now="\$(date +%s)"
+    if [[ "\$modified" =~ ^[0-9]+$ ]] && [ \$((now - modified)) -ge "\$PENDING_MAX_SECONDS" ]; then
+      log_msg "startup restore pending guard expired; allowing automatic saves"
+      rm -f "\$STARTUP_RESTORE_GUARD"
+      return 1
+    fi
+  fi
+  return 0
+}
+
+seed_startup_restore_guard() {
+  [[ -e "\$STARTUP_RESTORE_GUARD" ]] && return 0
+  printf '%s\n' 'pending-window-state-saver' > "\$STARTUP_RESTORE_GUARD" 2>/dev/null || return 0
+  log_msg "startup restore pending; blocking automatic saves"
+}
+
 save_now() {
   local reason="\$1"
   if [[ ! -x "\$HELPER" ]]; then
     log_msg "window state helper missing at \$HELPER"
     return 0
   fi
-  if [[ -e "\$RESTORE_GUARD" || -e "\$STARTUP_RESTORE_GUARD" ]]; then
+  if [[ -e "\$RESTORE_GUARD" ]] || startup_restore_active; then
     log_msg "restore active; skipped window state save (\$reason)"
     return 0
   fi
@@ -2548,6 +2590,7 @@ shutdown() {
 trap shutdown TERM INT HUP
 
 log_msg "window state saver started; interval \${INTERVAL}s"
+seed_startup_restore_guard
 
 while true; do
   sleep "\$INTERVAL" &
