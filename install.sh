@@ -1708,6 +1708,7 @@ INCOMPLETE_CLEAR_DELAY="${OMARCHY_STARTUP_INCOMPLETE_CLEAR_DELAY:-180}"
 INCOMPLETE_CLEAR_ATTEMPTS="${OMARCHY_STARTUP_INCOMPLETE_CLEAR_ATTEMPTS:-6}"
 INCOMPLETE_CLEAR_RETRY_DELAY="${OMARCHY_STARTUP_INCOMPLETE_CLEAR_RETRY_DELAY:-5}"
 INCOMPLETE_SAVE_WAIT_ATTEMPTS="${OMARCHY_STARTUP_INCOMPLETE_SAVE_WAIT_ATTEMPTS:-6}"
+STARTED_AT="${OMARCHY_STARTUP_RESTORE_STARTED_AT:-$(date +%s)}"
 RESTORE_RESULT="complete"
 
 log_msg() {
@@ -1729,8 +1730,21 @@ schedule_incomplete_clear() {
   [ "$INCOMPLETE_CLEAR_DELAY" -gt 0 ] || return 0
   [ -e "$PARTIAL_RESTORE_GUARD" ] || return 0
 
+  now="$(date +%s)"
+  elapsed=0
+  if [[ "$STARTED_AT" =~ ^[0-9]+$ ]] && [ "$now" -ge "$STARTED_AT" ]; then
+    elapsed=$((now - STARTED_AT))
+  fi
+  remaining="$INCOMPLETE_CLEAR_DELAY"
+  if [ "$elapsed" -lt "$INCOMPLETE_CLEAR_DELAY" ]; then
+    remaining=$((INCOMPLETE_CLEAR_DELAY - elapsed))
+  else
+    remaining=0
+  fi
+  log_msg "startup restore incomplete; clearing in ${remaining}s (${elapsed}s elapsed of ${INCOMPLETE_CLEAR_DELAY}s grace)"
+
   (
-    sleep "$INCOMPLETE_CLEAR_DELAY"
+    [ "$remaining" -gt 0 ] && sleep "$remaining"
     [ -e "$PARTIAL_RESTORE_GUARD" ] || exit 0
 
     attempts="$INCOMPLETE_CLEAR_ATTEMPTS"

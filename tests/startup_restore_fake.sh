@@ -108,6 +108,28 @@ actual="$(cat "$LOG_FILE")"
 [[ ! -e "$GUARD_FILE" ]]
 [[ ! -e "$PARTIAL_GUARD_FILE" ]]
 
+: > "$LOG_FILE"
+rm -f "$PARTIAL_GUARD_FILE"
+old_started_at="$(($(date +%s) - 10))"
+OMARCHY_FAIL_RESTORE=1 \
+  OMARCHY_STARTUP_RESTORE_STARTED_AT="$old_started_at" \
+  OMARCHY_STARTUP_INCOMPLETE_CLEAR_DELAY=1 \
+  OMARCHY_STARTUP_INCOMPLETE_CLEAR_ATTEMPTS=1 \
+  "$CONFIG_DIR/startup_restore.sh"
+
+for _ in {1..30}; do
+  if [[ ! -e "$PARTIAL_GUARD_FILE" ]] && grep -q 'status:complete' "$LOG_FILE"; then
+    break
+  fi
+  sleep 0.2
+done
+
+expected=$'status:active:guard=1:partial=0\nrepair\nrestore\nrestore-attempts:30 delay:1\nrepair-detached\nstatus:incomplete:guard=0:partial=1\nsave:manual:startup-incomplete-timeout\nstatus:complete:guard=0:partial=0'
+actual="$(cat "$LOG_FILE")"
+[[ "$actual" == "$expected" ]]
+[[ ! -e "$GUARD_FILE" ]]
+[[ ! -e "$PARTIAL_GUARD_FILE" ]]
+
 /usr/bin/perl -0777 -e '
   my $source = <>;
   die "unexpected named-space rehome catch-all\n"

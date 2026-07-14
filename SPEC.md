@@ -103,8 +103,11 @@ snapshot or login-time app launch cannot crowd the message workspace.
   login-time app creation and rule-based placement cannot replace the
   pre-reboot state. The pending startup guard has a bounded fail-open expiry so
   automatic saves do not remain disabled forever if AeroSpace never runs the
-  startup restore command. Manual saves clear incomplete-restore state after
-  the user accepts the current layout.
+  startup restore command. The incomplete-restore cleanup grace is measured
+  from the start of `startup_restore.sh`, not from the end of all restore and
+  repair retries, so the warning does not linger after a long startup pass.
+  Manual saves clear incomplete-restore state after the user accepts the
+  current layout.
 - **Assigned apps override saved stale placement.** During restore and repair,
   canonical app assignments win over saved window state. For example, a stale
   or corrupted snapshot must not keep Gmail on `02`; Gmail belongs on `01`.
