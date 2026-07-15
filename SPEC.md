@@ -144,8 +144,8 @@ snapshot or login-time app launch cannot crowd the message workspace.
   a single temporary watcher checks every 30 seconds and exits once the warning
   clears. Clearing the status must hide all restore-status items, including
   per-monitor items like `restore_status.0`, even when AeroSpace monitor
-  discovery is temporarily unavailable, and it must clear stale status labels
-  and backgrounds rather than only toggling item drawing off.
+  discovery is temporarily unavailable, and it must remove or clear stale
+  status labels and backgrounds rather than only toggling item drawing off.
 - **Window discovery** includes `⌥+Up` for a readable all-window picker,
   `⌥+Shift+Up` for Mission Control / expose, plus `⌥+Ctrl+Tab` and
   `⌥+Ctrl+Shift+Tab` to cycle through every AeroSpace-managed window across

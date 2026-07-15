@@ -63,6 +63,8 @@ flattened="$(tr '\n' ' ' < "$LOG_FILE")"
 [[ "$flattened" == *"<--set>"*"<restore_status>"*"<drawing=off>"* ]]
 [[ "$flattened" == *"<--set>"*"<restore_status.0>"*"<drawing=off>"* ]]
 [[ "$flattened" == *"<--set>"*"<restore_status.0>"*"<label=>"*"<background.drawing=off>"* ]]
+[[ "$flattened" == *"<--remove>"*"<restore_status>"* ]]
+[[ "$flattened" == *"<--remove>"*"<restore_status.0>"* ]]
 [[ "$flattened" == *"<--bar>"*"<hidden=on>"* ]]
 [[ "$(cat "$VISIBLE_STATE")" == "0" ]]
 [[ ! -e "$PREVIOUS_STATE" ]]

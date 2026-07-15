@@ -4232,6 +4232,13 @@ hide_status_items() {
   done
 }
 
+remove_status_items() {
+  sketchybar --remove restore_status >/dev/null 2>&1 || true
+  for slot in {0..9}; do
+    sketchybar --remove "restore_status.$slot" >/dev/null 2>&1 || true
+  done
+}
+
 show_active() {
   remember_bar_state
   ensure_item
@@ -4275,6 +4282,7 @@ restore_bar_state() {
 show_complete() {
   ensure_item
   hide_status_items
+  remove_status_items
   restore_bar_state
 }
 
