@@ -27,6 +27,10 @@ Bring the [Omarchy](https://omarchy.org/) / Hyprland Linux tiling workflow to ma
 - Prefer fake tests and generated-script syntax checks for validation. Do not
   run live restore/save/repair commands against the user's current window state
   unless the requested task requires it and the expected state impact is clear.
+- Generated AeroSpace app-assignment rules and move-window keybindings are part
+  of the contract and must have fake/source tests that fail if an assigned app
+  stops moving to its canonical workspace or `⌥+Shift+<number>` stops invoking
+  the workspace move helper.
 - Never let a partial startup layout overwrite a known-good saved state. Login
   and app-launch events are treated as unsafe until startup restore has either
   completed or the bounded startup guard has expired.
