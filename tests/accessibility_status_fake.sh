@@ -13,7 +13,6 @@ FAKE_BIN="$TMP_ROOT/bin"
 LOG_FILE="$TMP_ROOT/sketchybar.log"
 REPORT_HELPER="$HOME/.config/aerospace/accessibility_report.sh"
 STATUS_PLUGIN="$CONFIG_DIR/plugins/restore_status.sh"
-CHROME_LOG="$TMP_ROOT/chrome_rehome.log"
 STARTUP_GUARD="$TMPDIR/omarchy_window_state_startup_restore_active"
 
 mkdir -p "$HOME/.config/aerospace" "$CONFIG_DIR/plugins" "$FAKE_BIN" "$TMPDIR" "$XDG_RUNTIME_DIR"
@@ -111,27 +110,22 @@ export ITEM_BG=0xff222222
 EOF
 
 export PATH="$FAKE_BIN:$PATH"
-export OMARCHY_CHROME_REHOME_LOG="$CHROME_LOG"
-export OMARCHY_FAKE_LOADED_LABELS="com.omarchy-macos.chrome_rehome com.koekeishiya.skhd"
+export OMARCHY_FAKE_LOADED_LABELS="com.koekeishiya.skhd"
 export OMARCHY_RESTORE_STATUS_WATCH_INTERVAL=0
 
-printf '[2026-06-29T20:00:00Z] AXIsProcessTrusted: true\n' > "$CHROME_LOG"
 export OMARCHY_FAKE_AEROSPACE="windows-ok"
 [[ "$("$REPORT_HELPER" --count)" = "0" ]]
 report="$("$REPORT_HELPER")"
 [[ "$report" == *"No actionable Accessibility redo detected."* ]]
-[[ "$report" == *"Omarchy Chrome Rehome - Last chrome_rehome log says AXIsProcessTrusted: true."* ]]
 [[ "$report" == *"AeroSpace - AeroSpace can list windows."* ]]
 [[ "$report" == *"skhd - Service is loaded"* ]]
 
-printf '[2026-06-29T20:05:00Z] AXIsProcessTrusted: false\n' > "$CHROME_LOG"
 export OMARCHY_FAKE_AEROSPACE="windows-fail-monitors-ok"
-[[ "$("$REPORT_HELPER" --count)" = "2" ]]
+[[ "$("$REPORT_HELPER" --count)" = "1" ]]
 brief="$("$REPORT_HELPER" --brief || true)"
-[[ "$brief" == "Omarchy Chrome Rehome, AeroSpace" ]]
+[[ "$brief" == "AeroSpace" ]]
 report="$("$REPORT_HELPER")"
 [[ "$report" == *"Needs Accessibility redo:"* ]]
-[[ "$report" == *"Re-grant Omarchy Chrome Rehome"* ]]
 [[ "$report" == *"Re-grant AeroSpace"* ]]
 
 export OMARCHY_ACCESSIBILITY_REPORT_HELPER="$TMP_ROOT/helper_for_bar.sh"
@@ -139,7 +133,7 @@ export OMARCHY_SKETCHYBAR_LOG="$LOG_FILE"
 cat > "$OMARCHY_ACCESSIBILITY_REPORT_HELPER" <<'EOF'
 #!/usr/bin/env bash
 if [ "${1:-}" = "--brief" ]; then
-  printf 'Omarchy Chrome Rehome\n'
+  printf 'AeroSpace\n'
   exit 1
 fi
 exit 0
@@ -151,8 +145,8 @@ flattened="$(tr '\n' ' ' < "$LOG_FILE")"
 [[ "$flattened" == *"<--bar>"*"<hidden=off>"* ]]
 [[ "$flattened" == *"<--set>"*"<restore_status>"*"<drawing=off>"* ]]
 [[ "$flattened" == *"<--set>"*"<restore_status.0>"*"<display=1>"* ]]
-[[ "$flattened" == *"<--set>"*"<restore_status.0>"*"<drawing=on>"*"<label=AX: Omarchy Chrome Rehome>"* ]]
-[[ "$flattened" != *"<--set>"*"<restore_status>"*"<drawing=on>"*"<label=AX: Omarchy Chrome Rehome>"* ]]
+[[ "$flattened" == *"<--set>"*"<restore_status.0>"*"<drawing=on>"*"<label=AX: AeroSpace>"* ]]
+[[ "$flattened" != *"<--set>"*"<restore_status>"*"<drawing=on>"*"<label=AX: AeroSpace>"* ]]
 [[ "$(cat "$XDG_RUNTIME_DIR/omarchy_sketchybar_visible")" = "1" ]]
 
 touch "$STARTUP_GUARD"
@@ -160,7 +154,7 @@ touch "$STARTUP_GUARD"
 "$STATUS_PLUGIN"
 flattened="$(tr '\n' ' ' < "$LOG_FILE")"
 [[ "$flattened" == *"<label=Restoring windows>"* ]]
-[[ "$flattened" != *"<label=AX: Omarchy Chrome Rehome>"* ]]
+[[ "$flattened" != *"<label=AX: AeroSpace>"* ]]
 rm -f "$STARTUP_GUARD"
 
 cat > "$OMARCHY_ACCESSIBILITY_REPORT_HELPER" <<'EOF'

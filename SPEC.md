@@ -82,7 +82,7 @@ Default slot-0 app assignments:
 | 05 (Editors) | Zed, VS Code, Antigravity |
 | 06 (Agents) | Claude desktop, Gemini, ChatGPT |
 | 00 | Steam |
-| current workspace | Apps without an explicit rule or restored saved location |
+| first empty general-purpose workspace, else key `0` | Apps without an explicit rule or restored saved location |
 
 Workspace `02` is reserved for messaging. During startup repair and restore,
 unassigned windows found on or saved to `02` are moved to `08` so a corrupted
@@ -147,9 +147,9 @@ snapshot or login-time app launch cannot crowd the message workspace.
   observe that a component's macOS Accessibility grant is stale. The same
   diagnosis is available from `./omarchy.sh accessibility`. Because macOS does
   not expose arbitrary processes' Accessibility trust to shell scripts, the
-  report uses component health signals such as Chrome rehome's
-  `AXIsProcessTrusted` log and AeroSpace's ability to list windows;
-  unverifiable components are reported as unknown instead of as false failures.
+  report uses component health signals such as AeroSpace's ability to list
+  windows; unverifiable components are reported as unknown instead of as false
+  failures.
   The alert is normally event-driven; while an Accessibility warning is visible,
   a single temporary watcher checks every 30 seconds and exits once the warning
   clears. Clearing the status must hide all restore-status items, including
@@ -160,8 +160,13 @@ snapshot or login-time app launch cannot crowd the message workspace.
   `⌥+Shift+Up` for Mission Control / expose, plus `⌥+Ctrl+Tab` and
   `⌥+Ctrl+Shift+Tab` to cycle through every AeroSpace-managed window across
   workspaces.
-- **Unassigned windows stay where they open** so browser popups, compose
-  windows, and transient dialogs are not moved by a global catch-all rule.
+- **Launch rehome is general, not Chrome-only.** Named apps launched from any
+  workspace move to their canonical named slot-0 workspace. Unassigned apps move
+  to the first empty general-purpose workspace on the current monitor slot,
+  checking keys `7`, `8`, then `9` while ignoring the newly launched window
+  itself for emptiness. If none are empty, the app moves to that monitor slot's
+  key `0` workspace (`00`, `10`, etc.). Restore/repair guards suppress this
+  catch-all so startup restore can replay saved layout without being overwritten.
 - **1Password dialogs** are floated so authentication prompts stay usable on
   the current workspace.
 - **Front app label** in bar shows `<workspace> <app name>`
@@ -172,17 +177,8 @@ snapshot or login-time app launch cannot crowd the message workspace.
   accordion layout when the estimated split width would fall below 640 points
   per window. This keeps laptop-width displays usable once a workspace grows
   beyond two or three tiled windows.
-- **Chrome new-window rehome** uses an Accessibility-trusted LaunchAgent to
-  watch ordinary Chrome window creation on the built-in monitor slot only.
-  External monitor slots are left alone because those larger displays commonly
-  use mixed-app spaces intentionally. On slot `0`, if the current workspace
-  already contains ordinary Chrome, the new window stays there. Otherwise, it
-  should move to an existing ordinary Chrome workspace on the built-in monitor
-  when one exists. If no Chrome workspace exists on slot `0`, it may move to
-  the first empty general-purpose workspace. Reserved/named workspaces are not
-  candidates merely because they are empty: Mail/Msg/Music/Terms/Editors/
-  Agents/Steam map to `01`, `02`, `03`, `04`, `05`, `06`, and `00`. After any
-  decision, the updated layout is recorded.
+- **Unassigned rehome records layout changes.** After launch-time catch-all
+  movement, the updated layout is recorded and responsive layout is rechecked.
 
 ## Installer Behavior
 
@@ -198,8 +194,9 @@ snapshot or login-time app launch cannot crowd the message workspace.
   desktop-level shortcut cheatsheet widget during install/refresh and via
   `./omarchy.sh shortcuts-widget`
 - Loads a window-state saver LaunchAgent that saves every 15 minutes and traps launchd termination for best-effort logout/shutdown saves
-- Loads an AeroSpace login LaunchAgent and the Accessibility-backed Chrome
-  rehome LaunchAgent
+- Loads an AeroSpace login LaunchAgent. Launch-time rehome is handled by
+  AeroSpace window-detected callbacks, not a Chrome-specific Accessibility
+  daemon.
 - Writes `~/.config/aerospace/accessibility_report.sh` and wires it to a
   SketchyBar warning item for stale Accessibility permissions
 - Leaves an install marker at `~/.omarchy-macos-backup/.installed` to prevent duplicate installs

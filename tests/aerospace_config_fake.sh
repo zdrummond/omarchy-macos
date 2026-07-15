@@ -45,6 +45,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   die "app-assignment saver callback must keep checking further callbacks\n"
     unless $source =~ /\[\[on-window-detected\]\]\nrun = \[\n  '\''exec-and-forget ~\/\.config\/aerospace\/window_state_debounced_save\.sh window-detected'\'',\n  '\''exec-and-forget ~\/\.config\/aerospace\/responsive_layout\.sh window-detected'\''\n\]\ncheck-further-callbacks = true/;
 
+  die "missing final unassigned app launch rehome callback\n"
+    unless $source =~ /\[\[on-window-detected\]\]\nrun = '\''exec-and-forget ~\/\.config\/aerospace\/unassigned_window_rehome\.sh'\''/;
+
   die "move helper no longer calls aerospace move-node-to-workspace target\n"
     unless $source =~ /case "\$ACTION" in\n  --move\)\n    aerospace move-node-to-workspace "\$TARGET"/;
 

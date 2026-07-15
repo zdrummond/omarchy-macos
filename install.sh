@@ -123,7 +123,6 @@ cmd_install() {
   write_skhd_config
   write_sketchybar_config
   write_borders_config_if_enabled
-  write_chrome_rehome_daemon
   write_shortcut_desktop_widget
 
   header "Tuning macOS for instant window movement..."
@@ -182,7 +181,6 @@ cmd_refresh() {
   write_skhd_config
   write_sketchybar_config
   write_borders_config_if_enabled
-  write_chrome_rehome_daemon
   write_shortcut_desktop_widget
 
   header "Restarting services..."
@@ -886,10 +884,10 @@ start_services() {
   info "Disabling bar_toggle daemon..."
   disable_bar_toggle_daemons
 
-  info "Starting chrome_rehome daemon..."
-  launchctl unload "$CHROME_REHOME_PLIST" 2>/dev/null || true
-  launchctl load "$CHROME_REHOME_PLIST" 2>/dev/null || \
-    warn "Could not load chrome_rehome LaunchAgent"
+  info "Disabling legacy chrome_rehome daemon..."
+  if [[ -f "$CHROME_REHOME_PLIST" ]]; then
+    launchctl unload "$CHROME_REHOME_PLIST" 2>/dev/null || true
+  fi
 
   info "Starting shortcut desktop widget..."
   launchctl unload "$SHORTCUT_WIDGET_PLIST" 2>/dev/null || true
@@ -1237,6 +1235,9 @@ run = ['move-node-to-workspace 00', 'workspace 00']
 if.app-name-regex-substring = '1Password'
 run = ['layout floating']
 
+[[on-window-detected]]
+run = 'exec-and-forget ~/.config/aerospace/unassigned_window_rehome.sh'
+
 # [[on-window-detected]]
 # if.app-name-regex-substring = 'slack|discord'
 # run = 'move-node-to-workspace 8'
@@ -1572,6 +1573,80 @@ omarchy_repair_app_assigned_workspaces() {
 SPACE_STATE_EOF
 
   chmod +x "$AEROSPACE_DIR/omarchy_space_state.sh"
+
+  cat > "$AEROSPACE_DIR/unassigned_window_rehome.sh" << 'UNASSIGNED_WINDOW_REHOME_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$HOME/.config/aerospace/omarchy_space_state.sh"
+
+TMP_ROOT="${TMPDIR:-/tmp}"
+RESTORE_GUARD="${OMARCHY_WINDOW_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_restore_active}"
+STARTUP_RESTORE_GUARD="${OMARCHY_WINDOW_STARTUP_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_startup_restore_active}"
+PARTIAL_RESTORE_GUARD="${OMARCHY_WINDOW_PARTIAL_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_restore_incomplete}"
+LOG_FILE="${OMARCHY_WINDOW_STATE_LOG:-/tmp/omarchy_window_state.log}"
+
+log_msg() {
+  printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+if [[ -e "$RESTORE_GUARD" || -e "$STARTUP_RESTORE_GUARD" || -e "$PARTIAL_RESTORE_GUARD" ]]; then
+  log_msg "restore active; skipped unassigned launch rehome"
+  exit 0
+fi
+
+row=$("$OMARCHY_AEROSPACE_BIN" list-windows --focused --format '%{window-id}|%{workspace}|%{app-name}|%{app-bundle-id}' 2>/dev/null | head -n 1) || exit 0
+IFS='|' read -r window_id workspace app_name bundle_id <<< "$row"
+[[ "$window_id" =~ ^[0-9]+$ ]] || exit 0
+[ -n "$workspace" ] || exit 0
+
+assigned=$(omarchy_assigned_workspace_for_app "$app_name" "$bundle_id" 2>/dev/null || true)
+[ -z "$assigned" ] || exit 0
+
+slot=""
+if [[ "$workspace" =~ ^([0-9])[0-9]$ ]]; then
+  slot="${BASH_REMATCH[1]}"
+elif [[ "$workspace" =~ ^[0-9]$ ]]; then
+  slot=$(omarchy_focused_monitor_slot 2>/dev/null || printf '0')
+else
+  slot=$(omarchy_focused_monitor_slot 2>/dev/null || printf '0')
+fi
+[[ "$slot" =~ ^[0-9]+$ ]] || slot=0
+
+windows=$("$OMARCHY_AEROSPACE_BIN" list-windows --all --format '%{window-id}|%{workspace}' 2>/dev/null) || exit 0
+
+target=""
+for key in 7 8 9; do
+  candidate="${slot}${key}"
+  occupied=0
+  while IFS='|' read -r row_window_id row_workspace; do
+    [[ "$row_window_id" =~ ^[0-9]+$ ]] || continue
+    [ "$row_window_id" = "$window_id" ] && continue
+    if [ "$row_workspace" = "$candidate" ]; then
+      occupied=1
+      break
+    fi
+  done <<< "$windows"
+  if [ "$occupied" -eq 0 ]; then
+    target="$candidate"
+    break
+  fi
+done
+
+[ -n "$target" ] || target="${slot}0"
+[ "$target" = "$workspace" ] && exit 0
+
+if "$OMARCHY_AEROSPACE_BIN" move-node-to-workspace --window-id "$window_id" "$target" >/dev/null 2>&1; then
+  "$OMARCHY_AEROSPACE_BIN" workspace "$target" >/dev/null 2>&1 || true
+  "$HOME/.config/aerospace/window_state_debounced_save.sh" "unassigned-window-rehome-$target" >/dev/null 2>&1 || true
+  "$HOME/.config/aerospace/responsive_layout.sh" "unassigned-window-rehome-$target" >/dev/null 2>&1 || true
+  log_msg "unassigned launch rehome moved $window_id from $workspace to $target: $app_name / $bundle_id"
+else
+  log_msg "unassigned launch rehome failed moving $window_id from $workspace to $target: $app_name / $bundle_id"
+fi
+UNASSIGNED_WINDOW_REHOME_EOF
+
+  chmod +x "$AEROSPACE_DIR/unassigned_window_rehome.sh"
 
   cat > "$MONITOR_FRAME_SRC" << 'MONITOR_FRAME_SWIFT_EOF'
 import AppKit
@@ -3308,9 +3383,6 @@ write_accessibility_report_helper() {
 #!/usr/bin/env bash
 set -euo pipefail
 
-CHROME_REHOME_LABEL="${OMARCHY_CHROME_REHOME_LABEL:-com.omarchy-macos.chrome_rehome}"
-CHROME_REHOME_LOG="${OMARCHY_CHROME_REHOME_LOG:-/tmp/chrome_rehome.log}"
-
 ISSUES=""
 OKS=""
 UNKNOWNS=""
@@ -3339,35 +3411,6 @@ add_unknown() {
 launch_agent_loaded() {
   local label="$1"
   launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1
-}
-
-last_chrome_ax_line() {
-  [ -f "$CHROME_REHOME_LOG" ] || return 1
-  awk '/AXIsProcessTrusted/ { last=$0 } END { if (last != "") print last; else exit 1 }' "$CHROME_REHOME_LOG" 2>/dev/null
-}
-
-check_chrome_rehome() {
-  local last_ax
-  if ! launch_agent_loaded "$CHROME_REHOME_LABEL"; then
-    add_unknown "Omarchy Chrome Rehome" "LaunchAgent is not loaded, so Accessibility trust cannot be checked."
-    return 0
-  fi
-
-  last_ax="$(last_chrome_ax_line || true)"
-  case "$last_ax" in
-    *"AXIsProcessTrusted: false"*)
-      add_issue "Omarchy Chrome Rehome" "Last chrome_rehome log says AXIsProcessTrusted: false. Re-grant Omarchy Chrome Rehome in Privacy & Security > Accessibility."
-      ;;
-    *"AXIsProcessTrusted: true"*)
-      add_ok "Omarchy Chrome Rehome" "Last chrome_rehome log says AXIsProcessTrusted: true."
-      ;;
-    "")
-      add_unknown "Omarchy Chrome Rehome" "No AXIsProcessTrusted line found in $CHROME_REHOME_LOG yet."
-      ;;
-    *)
-      add_unknown "Omarchy Chrome Rehome" "Could not interpret last Accessibility log line: $last_ax"
-      ;;
-  esac
 }
 
 check_aerospace() {
@@ -3415,7 +3458,6 @@ print_section() {
 }
 
 run_checks() {
-  check_chrome_rehome
   check_aerospace
   check_skhd
 }
