@@ -73,7 +73,7 @@ printf '%s\n' \
 source "$HELPER"
 omarchy_repair_app_assigned_workspaces
 
-expected=$'101|02\n102|02\n104|00\n105|08\n106|02\n107|01\n108|03'
+expected=$'101|02\n102|02\n104|00\n105|08\n106|02\n107|01'
 actual="$(cat "$MOVES_FILE")"
 if [[ "$actual" != "$expected" ]]; then
   printf 'expected moves:\n%s\nactual moves:\n%s\n' "$expected" "$actual" >&2

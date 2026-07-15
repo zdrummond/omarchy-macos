@@ -102,6 +102,8 @@ case "$cmd" in
     for row in \
       "01|Bear|net.shinyfrog.bear" \
       "02|Messages|com.apple.MobileSMS" \
+      "03|Music|com.apple.Music" \
+      "03|TV|com.apple.TV" \
       "04|iTerm2|com.googlecode.iterm2" \
       "04|Google Chrome|com.google.Chrome"
     do
@@ -142,7 +144,8 @@ flattened="$(tr '\n' ' ' < "$LOG_FILE")"
 [[ "$flattened" == *"<space.0.2>"*"<label=Msg>"* ]]
 [[ "$flattened" == *"<space.0.1>"*"<label=Bear>"* ]]
 [[ "$flattened" != *"<space.0.1>"*"<label=Mail>"* ]]
-[[ "$flattened" == *"<space.0.3>"*"<label=Music>"* ]]
+[[ "$flattened" == *"<space.0.3>"*"<label=Music, TV>"* ]]
+[[ "$flattened" != *"<space.0.3>"*"<label=Music>"* ]]
 [[ "$flattened" == *"<space.0.4>"*"<label=Terms, Google Chrome>"* ]]
 [[ "$flattened" != *"<space.0.4>"*"<label=Terms, iTerm2"* ]]
 [[ "$flattened" != *"<space.0.2>"*"<label=Messages>"* ]]

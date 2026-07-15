@@ -77,7 +77,7 @@ Default slot-0 app assignments:
 |---|---|
 | 01 | Mail workspace; Apple Mail and Gmail Chrome app windows launch here by bundle id; both Mail and Gmail are treated as assigned apps for repair and bar labels |
 | 02 (Msg) | Messages, Signal, Google Chat |
-| 03 | Spotify, Music, Apple TV |
+| 03 | Spotify, Music |
 | 04 (Terms) | Ghostty, WezTerm, Warp, iTerm |
 | 05 (Editors) | Zed, VS Code, Antigravity |
 | 06 (Agents) | Claude desktop, Gemini, ChatGPT |
@@ -166,7 +166,9 @@ snapshot or login-time app launch cannot crowd the message workspace.
   checking keys `7`, `8`, then `9` while ignoring the newly launched window
   itself for emptiness. If none are empty, the app moves to that monitor slot's
   key `0` workspace (`00`, `10`, etc.). Restore/repair guards suppress this
-  catch-all so startup restore can replay saved layout without being overwritten.
+  catch-all so startup restore can replay saved layout without being
+  overwritten. Apple TV is unassigned; it must not be treated as a Music
+  workspace app.
 - **1Password dialogs** are floated so authentication prompts stay usable on
   the current workspace.
 - **Front app label** in bar shows `<workspace> <app name>`

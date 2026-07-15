@@ -127,6 +127,17 @@ expected=$'move:10:00\nworkspace:00\nsave:unassigned-window-rehome-00\nresponsiv
 actual="$(cat "$COMMANDS_FILE")"
 [[ "$actual" == "$expected" ]]
 
+printf '%s\n' \
+  '50|03|TV|com.apple.TV' \
+  '20|07|Todoist|com.todoist.mac.Todoist' \
+  '21|08|Weather|com.apple.weather' \
+  '22|09|Notes|com.apple.Notes' > "$WINDOWS_FILE"
+printf '50|03|TV|com.apple.TV\n' > "$FOCUSED_FILE"
+run_case
+expected=$'move:50:00\nworkspace:00\nsave:unassigned-window-rehome-00\nresponsive:unassigned-window-rehome-00'
+actual="$(cat "$COMMANDS_FILE")"
+[[ "$actual" == "$expected" ]]
+
 printf '30|04|iTerm2|com.googlecode.iterm2\n' > "$WINDOWS_FILE"
 printf '30|04|iTerm2|com.googlecode.iterm2\n' > "$FOCUSED_FILE"
 run_case

@@ -264,7 +264,7 @@ run_restore
 assert_moves "416|01"
 
 write_monitors "1|Built-in Display"
-write_windows "418|04|TV|com.apple.TV|TV"
+write_windows "418|03|TV|com.apple.TV|TV"
 cat > "$STATE_FILE" <<'JSON'
 {
   "format_version": 2,
@@ -281,7 +281,7 @@ cat > "$STATE_FILE" <<'JSON'
 }
 JSON
 run_restore
-assert_moves "418|03"
+assert_moves "418|04"
 
 write_monitors "1|Built-in Display"
 write_windows "421|02|Gmail|com.google.Chrome.app.fmgjjmmmlfnkbppncabfkddbjimcfncm|"

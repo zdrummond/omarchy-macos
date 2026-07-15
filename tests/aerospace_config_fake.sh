@@ -23,7 +23,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     ["Signal", "02"],
     ["Google Chat", "02"],
     ["Spotify|Music", "03"],
-    ["com.apple.TV", "03"],
     ["Ghostty|WezTerm|Warp|iTerm2", "04"],
     ["Zed|Antigravity", "05"],
     ["com.anthropic.claudefordesktop", "06"],
@@ -47,6 +46,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
   die "missing final unassigned app launch rehome callback\n"
     unless $source =~ /\[\[on-window-detected\]\]\nrun = '\''exec-and-forget ~\/\.config\/aerospace\/unassigned_window_rehome\.sh'\''/;
+
+  die "Apple TV must stay unassigned and use generic launch rehome\n"
+    if $source =~ /if\.app-id = '\''com\.apple\.TV'\''\nrun = \['\''move-node-to-workspace /;
 
   die "move helper no longer calls aerospace move-node-to-workspace target\n"
     unless $source =~ /case "\$ACTION" in\n  --move\)\n    aerospace move-node-to-workspace "\$TARGET"/;
