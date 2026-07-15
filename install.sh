@@ -2464,10 +2464,16 @@ LOCK_DIR="$TMP_ROOT/omarchy_window_state_debounced.lock"
 PENDING_FILE="$TMP_ROOT/omarchy_window_state_debounced.pending"
 RESTORE_GUARD="${OMARCHY_WINDOW_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_restore_active}"
 STARTUP_RESTORE_GUARD="${OMARCHY_WINDOW_STARTUP_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_startup_restore_active}"
+RESTORE_STATUS_HELPER="$HOME/.config/sketchybar/plugins/restore_status.sh"
 REASON="${1:-event}"
 
 log_msg() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >> "$LOG_FILE"
+}
+
+clear_restore_status() {
+  [ -x "$RESTORE_STATUS_HELPER" ] || return 0
+  "$RESTORE_STATUS_HELPER" complete >/dev/null 2>&1 || true
 }
 
 startup_restore_active() {
@@ -2479,6 +2485,7 @@ startup_restore_active() {
     if [[ "$modified" =~ ^[0-9]+$ ]] && [ $((now - modified)) -ge "$PENDING_MAX_SECONDS" ]; then
       log_msg "startup restore pending guard expired; allowing automatic saves"
       rm -f "$STARTUP_RESTORE_GUARD"
+      clear_restore_status
       return 1
     fi
   fi
@@ -2564,10 +2571,16 @@ SAVE_WAIT_ATTEMPTS="\${OMARCHY_WINDOW_SAVE_WAIT_ATTEMPTS:-5}"
 PENDING_MAX_SECONDS="\${OMARCHY_STARTUP_RESTORE_PENDING_MAX_SECONDS:-300}"
 RESTORE_GUARD="\${OMARCHY_WINDOW_RESTORE_GUARD:-\${TMPDIR:-/tmp}/omarchy_window_state_restore_active}"
 STARTUP_RESTORE_GUARD="\${OMARCHY_WINDOW_STARTUP_RESTORE_GUARD:-\${TMPDIR:-/tmp}/omarchy_window_state_startup_restore_active}"
+RESTORE_STATUS_HELPER="$HOME/.config/sketchybar/plugins/restore_status.sh"
 sleep_pid=""
 
 log_msg() {
   printf '[%s] %s\n' "\$(date '+%Y-%m-%dT%H:%M:%S%z')" "\$*" >> "\$LOG_FILE"
+}
+
+clear_restore_status() {
+  [ -x "\$RESTORE_STATUS_HELPER" ] || return 0
+  "\$RESTORE_STATUS_HELPER" complete >/dev/null 2>&1 || true
 }
 
 startup_restore_active() {
@@ -2579,6 +2592,7 @@ startup_restore_active() {
     if [[ "\$modified" =~ ^[0-9]+$ ]] && [ \$((now - modified)) -ge "\$PENDING_MAX_SECONDS" ]; then
       log_msg "startup restore pending guard expired; allowing automatic saves"
       rm -f "\$STARTUP_RESTORE_GUARD"
+      clear_restore_status
       return 1
     fi
   fi
