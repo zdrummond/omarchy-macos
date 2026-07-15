@@ -264,6 +264,26 @@ run_restore
 assert_moves "416|01"
 
 write_monitors "1|Built-in Display"
+write_windows "418|04|TV|com.apple.TV|TV"
+cat > "$STATE_FILE" <<'JSON'
+{
+  "format_version": 2,
+  "saved_at": "new",
+  "windows": [],
+  "snapshots": {
+    "0:built-in:Built-in Display": {
+      "format_version": 2,
+      "saved_at": "right",
+      "topology": {"key":"0:built-in:Built-in Display","monitor_count":1,"slot_names":["Built-in Display"],"monitors":[]},
+      "windows": [{"window_id":418,"target_workspace":"04","app_name":"TV","app_bundle_id":"com.apple.TV","title":"TV"}]
+    }
+  }
+}
+JSON
+run_restore
+assert_moves "418|03"
+
+write_monitors "1|Built-in Display"
 write_windows "421|02|Gmail|com.google.Chrome.app.fmgjjmmmlfnkbppncabfkddbjimcfncm|"
 cat > "$STATE_FILE" <<'JSON'
 {

@@ -1199,6 +1199,10 @@ if.app-name-regex-substring = 'Spotify|Music'
 run = ['move-node-to-workspace 03', 'workspace 03']
 
 [[on-window-detected]]
+if.app-id = 'com.apple.TV'
+run = ['move-node-to-workspace 03', 'workspace 03']
+
+[[on-window-detected]]
 if.app-name-regex-substring = 'Ghostty|WezTerm|Warp|iTerm2'
 run = ['move-node-to-workspace 04', 'workspace 04']
 
@@ -1537,6 +1541,10 @@ omarchy_assigned_workspace_for_app() {
   esac
 
   case "$bundle_id" in
+    com.apple.TV)
+      printf '03\n'
+      return 0
+      ;;
     com.anthropic.claudefordesktop|com.google.GeminiMacOS|com.openai.chat)
       printf '06\n'
       return 0
@@ -2010,6 +2018,7 @@ sub assigned_workspace {
     return "01" if $app =~ /Mail/i;
     return "02" if $app =~ /Messages|Signal|Google Chat/i;
     return "03" if $app =~ /Spotify|Music/i;
+    return "03" if $bundle eq "com.apple.TV";
     return "04" if $app =~ /Ghostty|WezTerm|Warp|iTerm2/i;
     return "05" if $app =~ /Zed|Antigravity/i;
     return "06" if $bundle eq "com.anthropic.claudefordesktop";

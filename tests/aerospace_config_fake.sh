@@ -23,6 +23,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     ["Signal", "02"],
     ["Google Chat", "02"],
     ["Spotify|Music", "03"],
+    ["com.apple.TV", "03"],
     ["Ghostty|WezTerm|Warp|iTerm2", "04"],
     ["Zed|Antigravity", "05"],
     ["com.anthropic.claudefordesktop", "06"],

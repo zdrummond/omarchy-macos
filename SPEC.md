@@ -77,7 +77,7 @@ Default slot-0 app assignments:
 |---|---|
 | 01 | Mail workspace; Apple Mail and Gmail Chrome app windows launch here by bundle id; both Mail and Gmail are treated as assigned apps for repair and bar labels |
 | 02 (Msg) | Messages, Signal, Google Chat |
-| 03 | Spotify, Music |
+| 03 | Spotify, Music, Apple TV |
 | 04 (Terms) | Ghostty, WezTerm, Warp, iTerm |
 | 05 (Editors) | Zed, VS Code, Antigravity |
 | 06 (Agents) | Claude desktop, Gemini, ChatGPT |
