@@ -99,9 +99,13 @@ snapshot or login-time app launch cannot crowd the message workspace.
   waits for AeroSpace, repairs detached-monitor workspaces, and replays the
   saved layout with a bounded startup retry window. Matching prefers app
   identity and title before falling back to app identity where that is
-  unambiguous. Startup restore does not write a post-restore snapshot, so
-  login-time app creation and rule-based placement cannot replace the
-  pre-reboot state. The pending startup guard has a bounded fail-open expiry so
+  unambiguous. Legacy single-digit saved workspaces are normalized back to slot
+  `0` two-digit workspaces before replay, so saved workspace `1` restores to
+  `01` instead of recreating a legacy `1` workspace. Startup restore refreshes
+  SketchyBar space labels after moving windows and does not write a
+  post-restore snapshot, so login-time app creation and rule-based placement
+  cannot replace the pre-reboot state. The pending startup guard has a bounded
+  fail-open expiry so
   automatic saves do not remain disabled forever if AeroSpace never runs the
   startup restore command; when that pending guard expires, stale restore-status
   UI is cleared as well. The default incomplete-restore cleanup grace is 120
@@ -122,9 +126,11 @@ snapshot or login-time app launch cannot crowd the message workspace.
   active workspaces are highlighted in blue, inactive workspaces with apps are
   mauve, and empty workspaces are dimmed. Workspace aliases are display-specific:
   slot `0` gets the named labels (`Mail`, `Msg`, `Music`, `Terms`, `Editors`,
-  `Agents`) while external displays use numeric/app labels. SketchyBar display
-  ids are resolved separately from AeroSpace monitor ids so dynamic multi-monitor
-  topologies can be represented correctly.
+  `Agents`) while external displays use numeric/app labels. If a named workspace
+  contains only apps that are not assigned to that workspace, the label shows the
+  actual app names instead of the alias so unexpected placement is visible.
+  SketchyBar display ids are resolved separately from AeroSpace monitor ids so
+  dynamic multi-monitor topologies can be represented correctly.
 - **Bar visibility defaults off.** SketchyBar starts hidden and toggles with `⌥ + Z`; `⌥+1-0` workspace switches and `⌥+Tab` hide it again. Press-to-peek is disabled because the modifier polling/repaint path can make SketchyBar unresponsive on multi-monitor setups.
 - **Status alert indicator** temporarily shows SketchyBar with
   `Restoring windows` during startup restore, then hides the indicator and

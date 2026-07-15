@@ -1728,6 +1728,11 @@ restore_status() {
   "$RESTORE_STATUS_HELPER" "$1" >/dev/null 2>&1 || true
 }
 
+refresh_space_labels() {
+  command -v sketchybar >/dev/null 2>&1 || return 0
+  sketchybar --trigger front_app_switched >/dev/null 2>&1 || true
+}
+
 schedule_incomplete_clear() {
   case "$INCOMPLETE_CLEAR_DELAY" in
     ''|*[!0-9]*)
@@ -1769,6 +1774,7 @@ schedule_incomplete_clear() {
         OMARCHY_WINDOW_SAVE_WAIT_ATTEMPTS="$save_wait_attempts" \
           "$WINDOW_STATE_HELPER" save manual startup-incomplete-timeout >> "$LOG_FILE" 2>&1; then
         restore_status complete
+        refresh_space_labels
         exit 0
       fi
       [ "$attempt" -lt "$attempts" ] || break
@@ -1778,6 +1784,7 @@ schedule_incomplete_clear() {
     log_msg "startup restore incomplete clear save failed; clearing stale incomplete marker"
     rm -f "$PARTIAL_RESTORE_GUARD"
     restore_status complete
+    refresh_space_labels
   ) >/dev/null 2>&1 &
 }
 
@@ -1789,6 +1796,7 @@ cleanup() {
   else
     restore_status complete
   fi
+  refresh_space_labels
 }
 trap cleanup EXIT
 
@@ -2155,6 +2163,7 @@ sub target_workspace {
     } else {
         $target = remap_workspace($base, $snapshot->{topology}, $current_topology);
     }
+    $target = "0$target" if $target =~ /^[0-9]$/;
     return "08" if $target eq "02" || $target eq "2";
     return $target;
 }
@@ -3898,6 +3907,25 @@ unexpected_apps_for_alias() {
     sed 's/,/, /g'
 }
 
+assigned_apps_for_alias() {
+  local workspace="$1"
+  local rows="$2"
+  local legacy_workspace="${3:-}"
+
+  printf '%s\n' "$rows" |
+    while IFS='|' read -r row_workspace app_name bundle_id; do
+      [ "$row_workspace" = "$workspace" ] || { [ -n "$legacy_workspace" ] && [ "$row_workspace" = "$legacy_workspace" ]; } || continue
+      [ -n "$app_name" ] || continue
+      local assigned
+      assigned=$(omarchy_assigned_workspace_for_app "$app_name" "$bundle_id" 2>/dev/null || true)
+      [ "$assigned" = "$workspace" ] || continue
+      printf '%s\n' "$app_name"
+    done |
+    sort -u |
+    paste -sd "," - |
+    sed 's/,/, /g'
+}
+
 highlight_space() {
   local focused="$1"  # full workspace name, e.g. "23", or empty
   local focused_monitor focused_key
@@ -3968,7 +3996,7 @@ highlight_space() {
     for KEY in 1 2 3 4 5 6 7 8 9 0; do
       local ws_name="${slot}${KEY}"
       local name="space.$slot.$KEY"
-      local label legacy_ws apps alias unexpected_apps
+      local label legacy_ws apps alias assigned_apps unexpected_apps
       legacy_ws=""
       [ "$visible_ws" = "$KEY" ] && legacy_ws="$KEY"
       apps=$(printf '%s\n' "$windows" \
@@ -3976,8 +4004,11 @@ highlight_space() {
         | sort -u | paste -sd "," - | sed 's/,/, /g')
       alias=$(space_alias_label "$ws_name" 2>/dev/null || true)
       if [ -n "$alias" ]; then
+        assigned_apps=$(assigned_apps_for_alias "$ws_name" "$windows" "$legacy_ws" 2>/dev/null || true)
         unexpected_apps=$(unexpected_apps_for_alias "$ws_name" "$windows" "$legacy_ws" 2>/dev/null || true)
-        if [ -n "$unexpected_apps" ]; then
+        if [ -n "$unexpected_apps" ] && [ -z "$assigned_apps" ]; then
+          label="$unexpected_apps"
+        elif [ -n "$unexpected_apps" ]; then
           label="$alias, $unexpected_apps"
         else
           label="$alias"

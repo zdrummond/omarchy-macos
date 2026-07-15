@@ -100,6 +100,7 @@ case "$cmd" in
       esac
     done
     for row in \
+      "01|Bear|net.shinyfrog.bear" \
       "02|Messages|com.apple.MobileSMS" \
       "04|iTerm2|com.googlecode.iterm2" \
       "04|Google Chrome|com.google.Chrome"
@@ -139,7 +140,8 @@ highlight_space "02"
 
 flattened="$(tr '\n' ' ' < "$LOG_FILE")"
 [[ "$flattened" == *"<space.0.2>"*"<label=Msg>"* ]]
-[[ "$flattened" == *"<space.0.1>"*"<label=Mail>"* ]]
+[[ "$flattened" == *"<space.0.1>"*"<label=Bear>"* ]]
+[[ "$flattened" != *"<space.0.1>"*"<label=Mail>"* ]]
 [[ "$flattened" == *"<space.0.3>"*"<label=Music>"* ]]
 [[ "$flattened" == *"<space.0.4>"*"<label=Terms, Google Chrome>"* ]]
 [[ "$flattened" != *"<space.0.4>"*"<label=Terms, iTerm2"* ]]

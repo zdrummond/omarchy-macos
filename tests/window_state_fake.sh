@@ -244,6 +244,26 @@ run_restore
 assert_moves "411|08"
 
 write_monitors "1|Built-in Display"
+write_windows "416|07|Bear|net.shinyfrog.bear|Bear"
+cat > "$STATE_FILE" <<'JSON'
+{
+  "format_version": 2,
+  "saved_at": "new",
+  "windows": [],
+  "snapshots": {
+    "0:built-in:Built-in Display": {
+      "format_version": 2,
+      "saved_at": "right",
+      "topology": {"key":"0:built-in:Built-in Display","monitor_count":1,"slot_names":["Built-in Display"],"monitors":[]},
+      "windows": [{"window_id":416,"workspace":"1","raw_workspace":"1","target_workspace":"1","app_name":"Bear","app_bundle_id":"net.shinyfrog.bear","title":"Bear"}]
+    }
+  }
+}
+JSON
+run_restore
+assert_moves "416|01"
+
+write_monitors "1|Built-in Display"
 write_windows "421|02|Gmail|com.google.Chrome.app.fmgjjmmmlfnkbppncabfkddbjimcfncm|"
 cat > "$STATE_FILE" <<'JSON'
 {
