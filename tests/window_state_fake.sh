@@ -497,4 +497,10 @@ cmp -s "$STATE_FILE.before" "$STATE_FILE"
 run_restore
 assert_moves "801|07"
 
+/usr/bin/perl -0777 -e '
+  my $source = <>;
+  die "restore wrapper must repair named workspace ownership after replay\n"
+    unless $source =~ /cat > "\$WINDOW_STATE_WRAPPER" << .*?command="\$\{1:-status\}".*?if \[ "\$command" = "restore" \].*?omarchy_repair_app_assigned_workspaces/s;
+' "$ROOT/install.sh"
+
 printf 'window_state_fake.sh: all checks passed\n'

@@ -81,8 +81,8 @@ Default slot-0 app assignments:
 | 04 (Terms) | Ghostty, WezTerm, Warp, iTerm |
 | 05 (Editors) | Zed, VS Code, Antigravity |
 | 06 (Agents) | Claude desktop, Gemini, ChatGPT |
-| 00 | Steam |
-| first empty general-purpose workspace, else key `0` | Apps without an explicit rule or restored saved location |
+| unnamed workspace | Apps without an explicit rule or restored saved location |
+| 00 | Unnamed fallback workspace |
 
 Workspace `02` is reserved for messaging. During startup repair and restore,
 unassigned windows found on or saved to `02` are moved to `08` so a corrupted
@@ -117,13 +117,16 @@ snapshot or login-time app launch cannot crowd the message workspace.
   end of all restore and repair retries, so the warning does not linger after a
   long startup pass. Manual saves clear incomplete-restore state after the user
   accepts the current layout.
-- **Assigned apps override saved stale placement.** During restore and repair,
-  canonical app assignments win over saved window state. For example, a stale
-  or corrupted snapshot must not keep Gmail on `02`; Gmail belongs on `01`.
-  Saved state still controls unassigned apps and ordinary app windows that do
-  not have an explicit workspace contract, except that unassigned windows are
-  not allowed to occupy the reserved message workspace `02`; those restore or
-  repair to `08`.
+- **Named workspace ownership overrides saved stale placement.** During restore
+  and repair, canonical app assignments win over saved window state. For
+  example, a stale or corrupted snapshot must not keep Gmail on `02`; Gmail
+  belongs on `01`. Unassigned apps are not allowed to remain in any named
+  workspace (`01`-`06` by default), including when legacy workspace `1` is
+  normalized to `01`. After restore they move to the nearest empty unnamed
+  workspace on the same monitor slot, with ties preferring the lower key and
+  key `0` as the fallback. The reserved message workspace `02` keeps its
+  explicit `08` fallback. Saved state continues to control unassigned apps in
+  unnamed workspaces.
 - **Workspace repair** migrates windows from detached monitor-prefixed workspaces back to slot `0`, migrates visible legacy single-digit workspaces like `2` to the active monitor's slot-prefixed workspace like `12`, and repins any visible two-digit workspace that is shown on the wrong monitor.
 - **SketchyBar** creates separate space items per monitor slot and scopes them
   to each SketchyBar display. Each bar shows only that monitor's workspace set;
@@ -156,29 +159,48 @@ snapshot or login-time app launch cannot crowd the message workspace.
   per-monitor items like `restore_status.0`, even when AeroSpace monitor
   discovery is temporarily unavailable, and it must remove or clear stale
   status labels and backgrounds rather than only toggling item drawing off.
+  Restarting the window-state saver during `refresh` is not a login/startup
+  restore: the refresh path suppresses that restart's one-shot pending startup
+  guard, so it must not show `Restoring windows` or block automatic saves.
 - **Window discovery** includes `⌥+Up` for a readable all-window picker,
   `⌥+Shift+Up` for Mission Control / expose, plus `⌥+Ctrl+Tab` and
   `⌥+Ctrl+Shift+Tab` to cycle through every AeroSpace-managed window across
   workspaces.
-- **Launch rehome is general, not Chrome-only.** Named apps launched from any
-  workspace move to their canonical named slot-0 workspace. Unassigned apps move
-  to the first empty general-purpose workspace on the current monitor slot,
-  checking keys `7`, `8`, then `9` while ignoring the newly launched window
-  itself for emptiness. If none are empty, the app moves to that monitor slot's
-  key `0` workspace (`00`, `10`, etc.). Restore/repair guards suppress this
-  catch-all so startup restore can replay saved layout without being
-  overwritten. Apple TV is unassigned; it must not be treated as a Music
-  workspace app.
+- **Launch rehome protects named spaces.** A named workspace is any workspace
+  with an explicit category assignment/alias such as Mail, Msg, Music, Terms,
+  Editors, or Agents. Space key `0` is unnamed and is reserved as the fallback
+  destination. Apps assigned to a named category belong in that category's
+  slot-0 workspace and are moved there when they open elsewhere. Unassigned apps
+  that open in an unnamed workspace stay where they opened. Unassigned apps that
+  open in a named workspace are moved to the nearest empty unnamed workspace on
+  the same monitor slot, excluding key `0` from the normal candidate set and
+  ignoring the newly launched window itself for emptiness. "Nearest" is measured
+  by number-row key distance from the launch workspace key; ties prefer the
+  lower key. If no unnamed non-`0` workspace is empty, the app moves to that
+  monitor slot's key `0` workspace (`00`, `10`, etc.). Restore/repair guards
+  suppress this catch-all so startup restore can replay saved layout without
+  being overwritten. After replay, the same named-workspace ownership rule is
+  applied once so stale snapshots cannot repopulate named spaces. Apple TV is
+  unassigned; it must not be treated as a Music workspace app. After a
+  successful launch-time rehome, the save and responsive-layout checks finish,
+  then a short bounded settle delay allows launch-time activation events to
+  drain before AeroSpace switches to the destination workspace and focuses the
+  rehomed window. The newly created window must remain in view rather than
+  being pulled back to its source workspace by a late application event.
 - **1Password dialogs** are floated so authentication prompts stay usable on
   the current workspace.
 - **Front app label** in bar shows `<workspace> <app name>`
 - **Right-side bar** has wifi SSID, battery level with color-coded icons, and clock
 - **Optional JankyBorders** draws a 3px mauve border on the focused window, surface0 on all others when `OMARCHY_ENABLE_BORDERS=1` is set during install/refresh
 - **Normalization** flattens nested containers and corrects opposite orientations automatically
-- **Responsive layout guard** changes a crowded focused workspace to AeroSpace
+- **Responsive layout guard** changes a crowded workspace to AeroSpace
   accordion layout when the estimated split width would fall below 640 points
   per window. This keeps laptop-width displays usable once a workspace grows
-  beyond two or three tiled windows.
+  beyond two or three tiled windows. For newly detected windows, assignment or
+  unassigned-window rehome completes first; the guard then resolves the
+  detected window's final workspace and applies layout directly to that window
+  id. It must not accordion the temporary source workspace before moving the
+  new window away.
 - **Unassigned rehome records layout changes.** After launch-time catch-all
   movement, the updated layout is recorded and responsive layout is rechecked.
 

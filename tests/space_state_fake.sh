@@ -67,13 +67,16 @@ printf '%s\n' \
   "106|05|Google Chat|com.google.Chrome.app.google-chat" \
   "107|09|Gmail|com.google.Chrome.app.fmgjjmmmlfnkbppncabfkddbjimcfncm" \
   "108|04|TV|com.apple.TV" \
+  "109|01|Bear|net.shinyfrog.bear" \
+  "110|01|Maps|com.apple.Maps" \
+  "111|01|Notes|com.apple.Notes" \
   > "$WINDOWS_FILE"
 : > "$MOVES_FILE"
 
 source "$HELPER"
 omarchy_repair_app_assigned_workspaces
 
-expected=$'101|02\n102|02\n104|00\n105|08\n106|02\n107|01'
+expected=$'101|02\n102|02\n105|08\n106|02\n107|01\n108|07\n109|09\n110|00\n111|00'
 actual="$(cat "$MOVES_FILE")"
 if [[ "$actual" != "$expected" ]]; then
   printf 'expected moves:\n%s\nactual moves:\n%s\n' "$expected" "$actual" >&2

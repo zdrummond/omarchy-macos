@@ -20,6 +20,7 @@ FAKE_FRAME="$TMP_ROOT/monitor_frame"
 MONITOR_FILE="$TMP_ROOT/monitor.txt"
 WORKSPACE_FILE="$TMP_ROOT/workspace.txt"
 WINDOW_COUNT_FILE="$TMP_ROOT/window_count.txt"
+WINDOW_FILE="$TMP_ROOT/windows.txt"
 LAYOUT_FILE="$TMP_ROOT/layouts.txt"
 
 cat > "$FAKE_AEROSPACE" <<'FAKE_AEROSPACE_EOF'
@@ -57,13 +58,27 @@ case "$cmd" in
   list-windows)
     workspace=""
     count=0
+    all=0
+    format="%{window-id}|%{workspace}|%{monitor-id}"
     while [[ $# -gt 0 ]]; do
       case "$1" in
+        --all) all=1; shift ;;
         --workspace) workspace="$2"; shift 2 ;;
         --count) count=1; shift ;;
+        --format) format="$2"; shift 2 ;;
         *) shift ;;
       esac
     done
+    if [[ "$all" -eq 1 ]]; then
+      while IFS='|' read -r id row_workspace monitor_id; do
+        out="$format"
+        out="${out//%\{window-id\}/$id}"
+        out="${out//%\{workspace\}/$row_workspace}"
+        out="${out//%\{monitor-id\}/$monitor_id}"
+        printf '%s\n' "$out"
+      done < "$OMARCHY_FAKE_WINDOWS"
+      exit 0
+    fi
     [[ "$workspace" == "$(cat "$OMARCHY_FAKE_WORKSPACE")" && "$count" -eq 1 ]] || exit 1
     cat "$OMARCHY_FAKE_WINDOW_COUNT"
     ;;
@@ -90,6 +105,7 @@ export OMARCHY_MONITOR_FRAME_BIN="$FAKE_FRAME"
 export OMARCHY_FAKE_MONITOR="$MONITOR_FILE"
 export OMARCHY_FAKE_WORKSPACE="$WORKSPACE_FILE"
 export OMARCHY_FAKE_WINDOW_COUNT="$WINDOW_COUNT_FILE"
+export OMARCHY_FAKE_WINDOWS="$WINDOW_FILE"
 export OMARCHY_FAKE_LAYOUTS="$LAYOUT_FILE"
 export OMARCHY_WINDOW_STATE_LOG="$TMP_ROOT/layout.log"
 export OMARCHY_LAYOUT_GUARD_DELAY=0
@@ -98,9 +114,10 @@ run_case() {
   local monitor="$1" width="$2" windows="$3" expected="$4"
   printf '%s\n' "$monitor" > "$MONITOR_FILE"
   printf '04\n' > "$WORKSPACE_FILE"
+  printf '99|04|%s\n' "${monitor%%|*}" > "$WINDOW_FILE"
   printf '%s\n' "$windows" > "$WINDOW_COUNT_FILE"
   : > "$LAYOUT_FILE"
-  OMARCHY_FAKE_WIDTH="$width" "$AEROSPACE_DIR/responsive_layout.sh" test
+  OMARCHY_FAKE_WIDTH="$width" "$AEROSPACE_DIR/responsive_layout.sh" test 99
   actual="$(cat "$LAYOUT_FILE")"
   if [[ "$actual" != "$expected" ]]; then
     printf 'width=%s windows=%s expected layout:\n%s\nactual:\n%s\n' "$width" "$windows" "$expected" "$actual" >&2
@@ -109,8 +126,8 @@ run_case() {
 }
 
 run_case "1|Built-in Retina Display|1" 1512 2 ""
-run_case "1|Built-in Retina Display|1" 1512 3 "accordion horizontal vertical"
+run_case "1|Built-in Retina Display|1" 1512 3 "--window-id 99 accordion horizontal vertical"
 run_case "2|Studio Display|2" 2560 3 ""
-run_case "2|Studio Display|2" 2560 4 "accordion horizontal vertical"
+run_case "2|Studio Display|2" 2560 4 "--window-id 99 accordion horizontal vertical"
 
 printf 'responsive_layout_fake.sh: all checks passed\n'

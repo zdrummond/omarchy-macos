@@ -49,6 +49,12 @@ grep -q 'startup restore pending guard expired; allowing automatic saves' "$LOG_
     unless $source =~ /cat > "\$WINDOW_STATE_DEBOUNCED_SAVER" << .*?RESTORE_STATUS_HELPER=.*?clear_restore_status\(\).*?startup restore pending guard expired; allowing automatic saves.*?clear_restore_status.*?WINDOW_STATE_DEBOUNCED_SAVER_EOF/s;
   die "periodic saver does not clear restore status on pending expiry\n"
     unless $source =~ /cat > "\$WINDOW_STATE_SAVER" << .*?RESTORE_STATUS_HELPER=.*?clear_restore_status\(\).*?startup restore pending guard expired; allowing automatic saves.*?clear_restore_status.*?WINDOW_STATE_SAVER_EOF/s;
+  die "refresh must restart services in refresh mode\n"
+    unless $source =~ /cmd_refresh\(\).*?stop_services\n  start_services refresh/s;
+  die "refresh-mode service start must create and clean a one-shot saver marker\n"
+    unless $source =~ /start_services\(\).*?mode="\$\{1:-normal\}".*?skip-next-startup-guard.*?launchctl load "\$WINDOW_STATE_SAVER_PLIST".*?rm -f "\$WINDOW_STATE_REFRESH_RESTART_MARKER"/s;
+  die "periodic saver must consume a fresh refresh marker without seeding a startup guard\n"
+    unless $source =~ /cat > "\$WINDOW_STATE_SAVER" << .*?REFRESH_RESTART_MARKER=.*?seed_startup_restore_guard\(\) \{.*?skip-next-startup-guard.*?config refresh restart; startup restore guard not seeded.*?clear_restore_status.*?return 0.*?pending-window-state-saver/s;
 ' "$ROOT/install.sh"
 
 printf 'window_state_saver_fake.sh: all checks passed\n'

@@ -77,6 +77,7 @@ MONITOR_FRAME_BIN="$AEROSPACE_DIR/monitor_frame"
 WINDOW_STATE_SAVE_INTERVAL_SECONDS=900
 WINDOW_STATE_SAVER_LABEL="com.omarchy-macos.window_state_saver"
 WINDOW_STATE_SAVER_PLIST="$HOME/Library/LaunchAgents/$WINDOW_STATE_SAVER_LABEL.plist"
+WINDOW_STATE_REFRESH_RESTART_MARKER="${TMPDIR:-/tmp}/omarchy_window_state_refresh_restart"
 SHORTCUT_IMAGE_SRC="$AEROSPACE_DIR/shortcut_image.swift"
 SHORTCUT_IMAGE_BIN="$AEROSPACE_DIR/shortcut_image"
 SHORTCUT_IMAGE_OUTPUT="$HOME/Desktop/omarchy-shortcuts.png"
@@ -185,7 +186,7 @@ cmd_refresh() {
 
   header "Restarting services..."
   stop_services
-  start_services
+  start_services refresh
 
   echo ""
   success "Configuration refreshed."
@@ -830,15 +831,30 @@ brew_uninstall() {
 # SERVICES
 # =============================================================================
 start_services() {
+  local mode="${1:-normal}"
+
   info "Loading AeroSpace login starter..."
   launchctl unload "$AEROSPACE_START_PLIST" 2>/dev/null || true
   launchctl load "$AEROSPACE_START_PLIST" 2>/dev/null || \
     warn "Could not load AeroSpace login LaunchAgent"
 
   info "Starting window state saver..."
+  if [[ "$mode" == "refresh" ]]; then
+    printf '%s\n' 'skip-next-startup-guard' > "$WINDOW_STATE_REFRESH_RESTART_MARKER" 2>/dev/null || true
+  fi
   launchctl unload "$WINDOW_STATE_SAVER_PLIST" 2>/dev/null || true
   launchctl load "$WINDOW_STATE_SAVER_PLIST" 2>/dev/null || \
     warn "Could not load window state saver LaunchAgent"
+  if [[ "$mode" == "refresh" ]]; then
+    # The saver consumes this one-shot marker before seeding its login-only
+    # startup guard. Bound the wait and remove leftovers so a failed refresh
+    # can never suppress a future real login restore.
+    for _ in {1..20}; do
+      [[ ! -e "$WINDOW_STATE_REFRESH_RESTART_MARKER" ]] && break
+      sleep 0.1
+    done
+    rm -f "$WINDOW_STATE_REFRESH_RESTART_MARKER"
+  fi
 
   info "Starting aerospace..."
   if [[ -d /Applications/AeroSpace.app ]]; then
@@ -1164,10 +1180,7 @@ alt-ctrl-shift-l = 'exec-and-forget ~/.config/aerospace/move_node_to_monitor_and
 # ── App → workspace assignments ───────────────────────────────────────────
 
 [[on-window-detected]]
-run = [
-  'exec-and-forget ~/.config/aerospace/window_state_debounced_save.sh window-detected',
-  'exec-and-forget ~/.config/aerospace/responsive_layout.sh window-detected'
-]
+run = 'exec-and-forget ~/.config/aerospace/window_state_debounced_save.sh window-detected'
 check-further-callbacks = true
 
 # App-assignment rules default to monitor 0's spaces ("0N"). If a second
@@ -1175,54 +1188,62 @@ check-further-callbacks = true
 [[on-window-detected]]
 if.app-id = 'com.apple.mail'
 run = ['move-node-to-workspace 01', 'workspace 01']
+check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-id = 'com.google.Chrome.app.fmgjjmmmlfnkbppncabfkddbjimcfncm'
 run = ['move-node-to-workspace 01', 'workspace 01']
+check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Messages'
 run = ['move-node-to-workspace 02', 'workspace 02']
+check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Signal'
 run = ['move-node-to-workspace 02', 'workspace 02']
+check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Google Chat'
 run = ['move-node-to-workspace 02', 'workspace 02']
+check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Spotify|Music'
 run = ['move-node-to-workspace 03', 'workspace 03']
+check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Ghostty|WezTerm|Warp|iTerm2'
 run = ['move-node-to-workspace 04', 'workspace 04']
+check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Zed|Antigravity'
 run = ['move-node-to-workspace 05', 'workspace 05']
+check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-id = 'com.anthropic.claudefordesktop'
 run = ['move-node-to-workspace 06', 'workspace 06']
+check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-id = 'com.google.GeminiMacOS'
 run = ['move-node-to-workspace 06', 'workspace 06']
+check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-id = 'com.openai.chat'
 run = ['move-node-to-workspace 06', 'workspace 06']
+check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'ChatGPT'
 run = ['move-node-to-workspace 06', 'workspace 06']
-
-[[on-window-detected]]
-if.app-name-regex-substring = 'Steam'
-run = ['move-node-to-workspace 00', 'workspace 00']
+check-further-callbacks = true
 
 # Keep authentication prompts and password dialogs visible on the current
 # workspace. AeroSpace cannot force true "always on top", but floating and
@@ -1232,7 +1253,7 @@ if.app-name-regex-substring = '1Password'
 run = ['layout floating']
 
 [[on-window-detected]]
-run = 'exec-and-forget ~/.config/aerospace/unassigned_window_rehome.sh'
+run = 'exec-and-forget ~/.config/aerospace/unassigned_window_rehome.sh "\$AEROSPACE_WINDOW_ID"'
 
 # [[on-window-detected]]
 # if.app-name-regex-substring = 'slack|discord'
@@ -1534,7 +1555,6 @@ omarchy_assigned_workspace_for_app() {
     *Ghostty*|*WezTerm*|*Warp*|*iTerm2*) printf '04\n'; return 0 ;;
     *Zed*|*Antigravity*) printf '05\n'; return 0 ;;
     *ChatGPT*) printf '06\n'; return 0 ;;
-    *Steam*) printf '00\n'; return 0 ;;
   esac
 
   case "$bundle_id" in
@@ -1547,6 +1567,93 @@ omarchy_assigned_workspace_for_app() {
   return 1
 }
 
+omarchy_space_alias_lines() {
+  local alias_file="${OMARCHY_SPACE_ALIAS_FILE:-$HOME/.config/sketchybar/space_aliases}"
+  if [ -f "$alias_file" ]; then
+    awk -F= '$1 ~ /^0[0-9]$/ && length($2) { print $0 }' "$alias_file" 2>/dev/null
+    return 0
+  fi
+
+  printf '%s\n' \
+    '01=Mail' \
+    '02=Msg' \
+    '03=Music' \
+    '04=Terms' \
+    '05=Editors' \
+    '06=Agents'
+}
+
+omarchy_named_workspace_keys() {
+  omarchy_space_alias_lines |
+    awk -F= '$1 ~ /^0[1-9]$/ { print substr($1, 2, 1) }' |
+    sort -u
+}
+
+omarchy_workspace_key() {
+  local workspace="$1"
+  if [[ "$workspace" =~ ^[0-9][0-9]$ ]]; then
+    printf '%s\n' "${workspace:1:1}"
+  elif [[ "$workspace" =~ ^[0-9]$ ]]; then
+    printf '%s\n' "$workspace"
+  else
+    return 1
+  fi
+}
+
+omarchy_is_named_workspace() {
+  local workspace="$1"
+  local key named_key
+  key=$(omarchy_workspace_key "$workspace") || return 1
+  [ "$key" = "0" ] && return 1
+
+  while IFS= read -r named_key; do
+    [ "$key" = "$named_key" ] && return 0
+  done < <(omarchy_named_workspace_keys)
+
+  return 1
+}
+
+omarchy_nearest_empty_unnamed_workspace() {
+  local workspace="$1"
+  local rows="$2"
+  local ignored_window_id="${3:-}"
+  local slot launch_key key candidate row_window_id row_workspace
+  local occupied distance target="" best_distance=99
+
+  launch_key=$(omarchy_workspace_key "$workspace") || return 1
+  if [[ "$workspace" =~ ^([0-9])[0-9]$ ]]; then
+    slot="${BASH_REMATCH[1]}"
+  else
+    slot=$(omarchy_focused_monitor_slot 2>/dev/null || printf '0')
+  fi
+  [[ "$slot" =~ ^[0-9]+$ ]] || slot=0
+
+  for key in 1 2 3 4 5 6 7 8 9; do
+    omarchy_is_named_workspace "0${key}" && continue
+    candidate="${slot}${key}"
+    occupied=0
+    while IFS='|' read -r row_window_id row_workspace _; do
+      [[ "$row_window_id" =~ ^[0-9]+$ ]] || continue
+      [ -n "$ignored_window_id" ] && [ "$row_window_id" = "$ignored_window_id" ] && continue
+      if [ "$row_workspace" = "$candidate" ]; then
+        occupied=1
+        break
+      fi
+    done <<< "$rows"
+    [ "$occupied" -eq 0 ] || continue
+
+    distance=$((key - launch_key))
+    [ "$distance" -lt 0 ] && distance=$((-distance))
+    if [ "$distance" -lt "$best_distance" ]; then
+      target="$candidate"
+      best_distance="$distance"
+    fi
+  done
+
+  [ -n "$target" ] || target="${slot}0"
+  printf '%s\n' "$target"
+}
+
 omarchy_repair_app_assigned_workspaces() {
   local rows line window_id workspace app_name bundle_id target
   rows=$("$OMARCHY_AEROSPACE_BIN" list-windows --all --format '%{window-id}|%{workspace}|%{app-name}|%{app-bundle-id}' 2>/dev/null) || return 1
@@ -1556,10 +1663,14 @@ omarchy_repair_app_assigned_workspaces() {
     target=$(omarchy_assigned_workspace_for_app "$app_name" "$bundle_id" 2>/dev/null || true)
     if [ -z "$target" ] && [ "$workspace" = "02" ]; then
       target="08"
+    elif [ -z "$target" ] && omarchy_is_named_workspace "$workspace"; then
+      target=$(omarchy_nearest_empty_unnamed_workspace "$workspace" "$rows" "$window_id" 2>/dev/null || true)
     fi
     [ -n "$target" ] || continue
     [ "$workspace" = "$target" ] && continue
-    "$OMARCHY_AEROSPACE_BIN" move-node-to-workspace --window-id "$window_id" "$target" >/dev/null 2>&1 || true
+    if "$OMARCHY_AEROSPACE_BIN" move-node-to-workspace --window-id "$window_id" "$target" >/dev/null 2>&1; then
+      rows=$(printf '%s\n' "$rows" | awk -F'|' -v OFS='|' -v id="$window_id" -v target="$target" '$1 == id {$2 = target} {print}')
+    fi
   done <<< "$rows"
 }
 SPACE_STATE_EOF
@@ -1577,9 +1688,22 @@ RESTORE_GUARD="${OMARCHY_WINDOW_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_re
 STARTUP_RESTORE_GUARD="${OMARCHY_WINDOW_STARTUP_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_startup_restore_active}"
 PARTIAL_RESTORE_GUARD="${OMARCHY_WINDOW_PARTIAL_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_restore_incomplete}"
 LOG_FILE="${OMARCHY_WINDOW_STATE_LOG:-/tmp/omarchy_window_state.log}"
+FOLLOW_DELAY="${OMARCHY_REHOME_FOLLOW_DELAY:-0.5}"
 
 log_msg() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+check_responsive_layout() {
+  local reason="$1"
+  "$HOME/.config/aerospace/responsive_layout.sh" "$reason" "$window_id" >/dev/null 2>&1 || true
+}
+
+follow_rehomed_window() {
+  local target="$1"
+  sleep "$FOLLOW_DELAY" 2>/dev/null || true
+  "$OMARCHY_AEROSPACE_BIN" workspace "$target" >/dev/null 2>&1 || return 1
+  "$OMARCHY_AEROSPACE_BIN" focus --window-id "$window_id" >/dev/null 2>&1 || true
 }
 
 if [[ -e "$RESTORE_GUARD" || -e "$STARTUP_RESTORE_GUARD" || -e "$PARTIAL_RESTORE_GUARD" ]]; then
@@ -1587,53 +1711,46 @@ if [[ -e "$RESTORE_GUARD" || -e "$STARTUP_RESTORE_GUARD" || -e "$PARTIAL_RESTORE
   exit 0
 fi
 
-row=$("$OMARCHY_AEROSPACE_BIN" list-windows --focused --format '%{window-id}|%{workspace}|%{app-name}|%{app-bundle-id}' 2>/dev/null | head -n 1) || exit 0
+target_window_id="${1:-${AEROSPACE_WINDOW_ID:-}}"
+[[ "$target_window_id" =~ ^[0-9]+$ ]] || exit 0
+
+# The callback runs asynchronously. Focus may have changed by the time this
+# helper starts, so identify the detected window by the callback's window id
+# instead of consulting the currently focused window.
+row=$("$OMARCHY_AEROSPACE_BIN" list-windows --all --format '%{window-id}|%{workspace}|%{app-name}|%{app-bundle-id}' 2>/dev/null \
+  | awk -F'|' -v id="$target_window_id" '$1 == id { print; exit }') || exit 0
 IFS='|' read -r window_id workspace app_name bundle_id <<< "$row"
 [[ "$window_id" =~ ^[0-9]+$ ]] || exit 0
 [ -n "$workspace" ] || exit 0
 
 assigned=$(omarchy_assigned_workspace_for_app "$app_name" "$bundle_id" 2>/dev/null || true)
-[ -z "$assigned" ] || exit 0
-
-slot=""
-if [[ "$workspace" =~ ^([0-9])[0-9]$ ]]; then
-  slot="${BASH_REMATCH[1]}"
-elif [[ "$workspace" =~ ^[0-9]$ ]]; then
-  slot=$(omarchy_focused_monitor_slot 2>/dev/null || printf '0')
-else
-  slot=$(omarchy_focused_monitor_slot 2>/dev/null || printf '0')
+if [ -n "$assigned" ]; then
+  check_responsive_layout "assigned-window-settled-$assigned"
+  exit 0
 fi
-[[ "$slot" =~ ^[0-9]+$ ]] || slot=0
+
+if ! omarchy_is_named_workspace "$workspace"; then
+  check_responsive_layout "window-detected-settled-$workspace"
+  exit 0
+fi
 
 windows=$("$OMARCHY_AEROSPACE_BIN" list-windows --all --format '%{window-id}|%{workspace}' 2>/dev/null) || exit 0
-
-target=""
-for key in 7 8 9; do
-  candidate="${slot}${key}"
-  occupied=0
-  while IFS='|' read -r row_window_id row_workspace; do
-    [[ "$row_window_id" =~ ^[0-9]+$ ]] || continue
-    [ "$row_window_id" = "$window_id" ] && continue
-    if [ "$row_workspace" = "$candidate" ]; then
-      occupied=1
-      break
-    fi
-  done <<< "$windows"
-  if [ "$occupied" -eq 0 ]; then
-    target="$candidate"
-    break
-  fi
-done
-
-[ -n "$target" ] || target="${slot}0"
-[ "$target" = "$workspace" ] && exit 0
+target=$(omarchy_nearest_empty_unnamed_workspace "$workspace" "$windows" "$window_id" 2>/dev/null || true)
+if [ -z "$target" ] || [ "$target" = "$workspace" ]; then
+  check_responsive_layout "window-detected-settled-$workspace"
+  exit 0
+fi
 
 if "$OMARCHY_AEROSPACE_BIN" move-node-to-workspace --window-id "$window_id" "$target" >/dev/null 2>&1; then
-  "$OMARCHY_AEROSPACE_BIN" workspace "$target" >/dev/null 2>&1 || true
   "$HOME/.config/aerospace/window_state_debounced_save.sh" "unassigned-window-rehome-$target" >/dev/null 2>&1 || true
-  "$HOME/.config/aerospace/responsive_layout.sh" "unassigned-window-rehome-$target" >/dev/null 2>&1 || true
-  log_msg "unassigned launch rehome moved $window_id from $workspace to $target: $app_name / $bundle_id"
+  check_responsive_layout "unassigned-window-rehome-$target"
+  if follow_rehomed_window "$target"; then
+    log_msg "unassigned launch rehome moved and followed $window_id from $workspace to $target: $app_name / $bundle_id"
+  else
+    log_msg "unassigned launch rehome moved $window_id from $workspace to $target but follow failed: $app_name / $bundle_id"
+  fi
 else
+  check_responsive_layout "window-detected-move-failed-$workspace"
   log_msg "unassigned launch rehome failed moving $window_id from $workspace to $target: $app_name / $bundle_id"
 fi
 UNASSIGNED_WINDOW_REHOME_EOF
@@ -1683,14 +1800,16 @@ MIN_TILE_WIDTH="${OMARCHY_LAYOUT_MIN_TILE_WIDTH:-640}"
 MONITOR_FRAME_BIN="${OMARCHY_MONITOR_FRAME_BIN:-$HOME/.config/aerospace/monitor_frame}"
 LAYOUT_GUARD_DELAY="${OMARCHY_LAYOUT_GUARD_DELAY:-0.2}"
 REASON="${1:-event}"
+TARGET_WINDOW_ID="${2:-}"
 
 sleep "$LAYOUT_GUARD_DELAY" 2>/dev/null || true
 
-focused_monitor_width() {
-  local row screen_id monitor_name width fallback_width
-  row=$("$OMARCHY_AEROSPACE_BIN" list-monitors --focused --format '%{monitor-appkit-nsscreen-screens-id}|%{monitor-name}' 2>/dev/null | head -n 1) || true
-  screen_id="${row%%|*}"
-  monitor_name="${row#*|}"
+monitor_width() {
+  local monitor_id="$1"
+  local row row_monitor_id screen_id monitor_name width fallback_width
+  row=$("$OMARCHY_AEROSPACE_BIN" list-monitors --format '%{monitor-id}|%{monitor-appkit-nsscreen-screens-id}|%{monitor-name}' 2>/dev/null |
+    awk -F'|' -v id="$monitor_id" '$1 == id { print; exit }') || true
+  IFS='|' read -r row_monitor_id screen_id monitor_name <<< "$row"
 
   if [[ -x "$MONITOR_FRAME_BIN" && "$screen_id" =~ ^[0-9]+$ ]]; then
     width=$("$MONITOR_FRAME_BIN" "$screen_id" 2>/dev/null | awk -F'|' 'NR == 1 { print int($1) }') || true
@@ -1713,15 +1832,26 @@ focused_monitor_width() {
   fi
 }
 
-workspace=$(omarchy_focused_workspace 2>/dev/null || true)
+workspace=""
+monitor_id=""
+if [[ "$TARGET_WINDOW_ID" =~ ^[0-9]+$ ]]; then
+  row=$("$OMARCHY_AEROSPACE_BIN" list-windows --all --format '%{window-id}|%{workspace}|%{monitor-id}' 2>/dev/null |
+    awk -F'|' -v id="$TARGET_WINDOW_ID" '$1 == id { print; exit }') || true
+  IFS='|' read -r row_window_id workspace monitor_id <<< "$row"
+  [ "$row_window_id" = "$TARGET_WINDOW_ID" ] || exit 0
+else
+  workspace=$(omarchy_focused_workspace 2>/dev/null || true)
+  monitor_id=$("$OMARCHY_AEROSPACE_BIN" list-monitors --focused --format '%{monitor-id}' 2>/dev/null | head -n 1) || true
+fi
 [[ -n "$workspace" ]] || exit 0
+[[ "$monitor_id" =~ ^[0-9]+$ ]] || exit 0
 
 count=$("$OMARCHY_AEROSPACE_BIN" list-windows --workspace "$workspace" --count 2>/dev/null || true)
 count="$(printf '%s' "$count" | tr -cd '0-9')"
 [[ "$count" =~ ^[0-9]+$ ]] || exit 0
 [ "$count" -gt 1 ] || exit 0
 
-width=$(focused_monitor_width)
+width=$(monitor_width "$monitor_id")
 [[ "$width" =~ ^[0-9]+$ ]] || exit 0
 
 usable_width=$((width - 16 - ((count - 1) * 8)))
@@ -1729,11 +1859,15 @@ usable_width=$((width - 16 - ((count - 1) * 8)))
 per_window=$((usable_width / count))
 
 if [ "$per_window" -lt "$MIN_TILE_WIDTH" ]; then
-  "$OMARCHY_AEROSPACE_BIN" layout accordion horizontal vertical >/dev/null 2>&1 || true
+  if [[ "$TARGET_WINDOW_ID" =~ ^[0-9]+$ ]]; then
+    "$OMARCHY_AEROSPACE_BIN" layout --window-id "$TARGET_WINDOW_ID" accordion horizontal vertical >/dev/null 2>&1 || true
+  else
+    "$OMARCHY_AEROSPACE_BIN" layout accordion horizontal vertical >/dev/null 2>&1 || true
+  fi
 fi
 
-printf '[%s] responsive layout checked (%s): workspace=%s windows=%s width=%s per_window=%s threshold=%s\n' \
-  "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$REASON" "$workspace" "$count" "$width" "$per_window" "$MIN_TILE_WIDTH" \
+printf '[%s] responsive layout checked (%s): window=%s workspace=%s windows=%s width=%s per_window=%s threshold=%s\n' \
+  "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$REASON" "${TARGET_WINDOW_ID:-focused}" "$workspace" "$count" "$width" "$per_window" "$MIN_TILE_WIDTH" \
   >> "${OMARCHY_WINDOW_STATE_LOG:-/tmp/omarchy_window_state.log}" 2>/dev/null || true
 RESPONSIVE_LAYOUT_EOF
 
@@ -2091,7 +2225,6 @@ sub assigned_workspace {
     return "06" if $bundle eq "com.google.GeminiMacOS";
     return "06" if $bundle eq "com.openai.chat";
     return "06" if $app =~ /ChatGPT/i;
-    return "00" if $app =~ /Steam/i;
 
     return undef;
 }
@@ -2530,7 +2663,17 @@ WINDOW_STATE_PERL_EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
-exec /usr/bin/perl "$HOME/.config/aerospace/window_state.pl" "$@"
+command="${1:-status}"
+/usr/bin/perl "$HOME/.config/aerospace/window_state.pl" "$@"
+
+# Saved placement cannot override named workspace ownership. Run the same
+# lightweight assignment repair after both manual and startup restores so an
+# old generic workspace like `1` cannot repopulate the Mail workspace `01`.
+if [ "$command" = "restore" ] && [ -f "$HOME/.config/aerospace/omarchy_space_state.sh" ]; then
+  # shellcheck source=/dev/null
+  source "$HOME/.config/aerospace/omarchy_space_state.sh"
+  omarchy_repair_app_assigned_workspaces || true
+fi
 WINDOW_STATE_WRAPPER_EOF
 
   chmod +x "$WINDOW_STATE_WRAPPER"
@@ -2655,6 +2798,7 @@ SAVE_WAIT_ATTEMPTS="\${OMARCHY_WINDOW_SAVE_WAIT_ATTEMPTS:-5}"
 PENDING_MAX_SECONDS="\${OMARCHY_STARTUP_RESTORE_PENDING_MAX_SECONDS:-300}"
 RESTORE_GUARD="\${OMARCHY_WINDOW_RESTORE_GUARD:-\${TMPDIR:-/tmp}/omarchy_window_state_restore_active}"
 STARTUP_RESTORE_GUARD="\${OMARCHY_WINDOW_STARTUP_RESTORE_GUARD:-\${TMPDIR:-/tmp}/omarchy_window_state_startup_restore_active}"
+REFRESH_RESTART_MARKER="\${OMARCHY_WINDOW_REFRESH_RESTART_MARKER:-\${TMPDIR:-/tmp}/omarchy_window_state_refresh_restart}"
 RESTORE_STATUS_HELPER="$HOME/.config/sketchybar/plugins/restore_status.sh"
 sleep_pid=""
 
@@ -2684,6 +2828,18 @@ startup_restore_active() {
 }
 
 seed_startup_restore_guard() {
+  if [[ -e "\$REFRESH_RESTART_MARKER" ]]; then
+    marker="\$(cat "\$REFRESH_RESTART_MARKER" 2>/dev/null || true)"
+    modified="\$(stat -f %m "\$REFRESH_RESTART_MARKER" 2>/dev/null || printf '0')"
+    now="\$(date +%s)"
+    rm -f "\$REFRESH_RESTART_MARKER"
+    if [[ "\$marker" == "skip-next-startup-guard" && "\$modified" =~ ^[0-9]+$ ]] &&
+       [ \$((now - modified)) -ge 0 ] && [ \$((now - modified)) -le 30 ]; then
+      log_msg "config refresh restart; startup restore guard not seeded"
+      clear_restore_status
+      return 0
+    fi
+  fi
   [[ -e "\$STARTUP_RESTORE_GUARD" ]] && return 0
   printf '%s\n' 'pending-window-state-saver' > "\$STARTUP_RESTORE_GUARD" 2>/dev/null || return 0
   log_msg "startup restore pending; blocking automatic saves"
@@ -4030,8 +4186,10 @@ highlight_space() {
 
     # Display changes can race with SketchyBar reloads. Make updates
     # idempotently create missing slot items before setting labels.
-    sketchybar --add item "monitor.$slot" right >/dev/null 2>&1 || true
-    sketchybar --add item "spaces_separator.$slot" left >/dev/null 2>&1 || true
+    sketchybar --query "monitor.$slot" >/dev/null 2>&1 ||
+      sketchybar --add item "monitor.$slot" right >/dev/null 2>&1 || true
+    sketchybar --query "spaces_separator.$slot" >/dev/null 2>&1 ||
+      sketchybar --add item "spaces_separator.$slot" left >/dev/null 2>&1 || true
     args+=(--set "monitor.$slot" display="$display" label="$slot"
            --set "spaces_separator.$slot" display="$display" icon="|" label.drawing=off)
 
@@ -4061,7 +4219,11 @@ highlight_space() {
       local has_content="$apps"
       local active_label_color=$TEXT
       local idle_label_color=$SUBTEXT
-      sketchybar --add item "$name" left >/dev/null 2>&1 || true
+      # Re-adding an existing item changes SketchyBar's insertion order. Only
+      # create genuinely missing items so concurrent refreshes cannot rotate
+      # the number-row order.
+      sketchybar --query "$name" >/dev/null 2>&1 ||
+        sketchybar --add item "$name" left >/dev/null 2>&1 || true
       if [ -z "$has_content" ]; then
         if [ -z "$alias" ]; then
           label="[empty]"
