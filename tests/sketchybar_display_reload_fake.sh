@@ -75,7 +75,10 @@ run_plugin() {
   OMARCHY_FAKE_TOPOLOGY="$TOPOLOGY_FILE" \
   PATH="$FAKE_BIN:$PATH" \
   "$PLUGIN"
-  sleep 1.2
+  # The plugin intentionally delays reloads by one second and may also wait
+  # for an active config build. Leave enough margin for the background worker
+  # to finish before inspecting its effects.
+  sleep 1.8
 }
 
 printf '%s\n' \
@@ -106,5 +109,26 @@ changed_count="$(grep -c -- '--reload' "$SKETCHYBAR_LOG" || true)"
 [[ "$changed_count" = "2" ]]
 changed_refresh_count="$(grep -c '^refresh$' "$RESTORE_STATUS_LOG" || true)"
 [[ "$changed_refresh_count" = "2" ]]
+
+mkdir "$TMPDIR/omarchy_sketchybar_config.lock"
+printf '999999\n' > "$TMPDIR/omarchy_sketchybar_config.lock/pid"
+printf '%s\n' \
+  "1|Built-in Retina Display|1" \
+  "3|Pro Display XDR|3" \
+  > "$TOPOLOGY_FILE"
+
+OMARCHY_SKETCHYBAR_DISPLAY_RELOAD_INTERVAL=0 \
+OMARCHY_SKETCHYBAR_CONFIG_WAIT_ATTEMPTS=2 \
+OMARCHY_SKETCHYBAR_CONFIG_WAIT_DELAY=0.1 \
+  run_plugin
+deferred_count="$(grep -c -- '--reload' "$SKETCHYBAR_LOG" || true)"
+[[ "$deferred_count" = "2" ]]
+[[ ! -e "$TMPDIR/omarchy_sketchybar_display_topology" ]]
+grep -q 'config still active; deferring topology reload' "$LOG_FILE"
+
+rm -rf "$TMPDIR/omarchy_sketchybar_config.lock"
+OMARCHY_SKETCHYBAR_DISPLAY_RELOAD_INTERVAL=0 run_plugin
+retried_count="$(grep -c -- '--reload' "$SKETCHYBAR_LOG" || true)"
+[[ "$retried_count" = "3" ]]
 
 printf 'sketchybar_display_reload_fake.sh: all checks passed\n'

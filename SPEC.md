@@ -137,7 +137,10 @@ snapshot or login-time app launch cannot crowd the message workspace.
   contains only apps that are not assigned to that workspace, the label shows the
   actual app names instead of the alias so unexpected placement is visible.
   SketchyBar display ids are resolved separately from AeroSpace monitor ids so
-  dynamic multi-monitor topologies can be represented correctly.
+  dynamic multi-monitor topologies can be represented correctly. Configuration
+  builds are serialized, only the configuration build creates space items, and
+  every completed build explicitly restores number-row order (`1` through `0`)
+  so login-time highlights and topology reloads cannot rotate the bar.
 - **Bar visibility defaults off.** SketchyBar starts hidden and toggles with `⌥ + Z`; `⌥+1-0` workspace switches and `⌥+Tab` hide it again. Press-to-peek is disabled because the modifier polling/repaint path can make SketchyBar unresponsive on multi-monitor setups.
 - **Status alert indicator** temporarily shows SketchyBar with
   `Restoring windows` during startup restore, then hides the indicator and
@@ -159,6 +162,9 @@ snapshot or login-time app launch cannot crowd the message workspace.
   per-monitor items like `restore_status.0`, even when AeroSpace monitor
   discovery is temporarily unavailable, and it must remove or clear stale
   status labels and backgrounds rather than only toggling item drawing off.
+  Restore-status and space-label updates are bounded: a hung AeroSpace or
+  SketchyBar query may skip that UI update, but it cannot block restore cleanup
+  or prevent the incomplete marker's expiry worker from being scheduled.
   Restarting the window-state saver during `refresh` is not a login/startup
   restore: the refresh path suppresses that restart's one-shot pending startup
   guard, so it must not show `Restoring windows` or block automatic saves.

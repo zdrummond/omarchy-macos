@@ -142,6 +142,9 @@ flattened="$(tr '\n' ' ' < "$LOG_FILE")"
 [[ "$flattened" == *"<monitor.0>"*"<display=1>"* ]]
 [[ "$flattened" == *"<monitor.1>"*"<display=3>"* ]]
 [[ "$flattened" == *"<monitor.2>"*"<display=2>"* ]]
+[[ "$flattened" == *"<--order> <space.0.1> <space.0.2> <space.0.3> <space.0.4> <space.0.5> <space.0.6> <space.0.7> <space.0.8> <space.0.9> <space.0.0>"* ]]
+[[ "$flattened" == *"<space.1.1> <space.1.2> <space.1.3> <space.1.4> <space.1.5> <space.1.6> <space.1.7> <space.1.8> <space.1.9> <space.1.0>"* ]]
+[[ "$flattened" == *"<space.2.1> <space.2.2> <space.2.3> <space.2.4> <space.2.5> <space.2.6> <space.2.7> <space.2.8> <space.2.9> <space.2.0>"* ]]
 
 : > "$LOG_FILE"
 source "$CONFIG_DIR/plugins/spaces.sh"
@@ -151,5 +154,7 @@ flattened="$(tr '\n' ' ' < "$LOG_FILE")"
 [[ "$flattened" == *"<space.2.0>"*"<display=2>"*"<label=Notes>"* ]]
 [[ "$flattened" == *"<monitor.1>"*"<display=3>"*"<label=1>"* ]]
 [[ "$flattened" == *"<monitor.2>"*"<display=2>"*"<label=2>"* ]]
+[[ "$flattened" != *"<--add>"* ]]
+[[ "$flattened" != *"<--query>"* ]]
 
 printf 'sketchybar_display_fake.sh: all checks passed\n'

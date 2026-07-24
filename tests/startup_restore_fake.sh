@@ -9,11 +9,16 @@ export HOME="$TMP_ROOT/home"
 export TMPDIR="$TMP_ROOT/tmp"
 CONFIG_DIR="$HOME/.config/aerospace"
 SKETCHY_DIR="$HOME/.config/sketchybar"
+FAKE_BIN="$TMP_ROOT/bin"
 GUARD_FILE="$TMPDIR/omarchy_window_state_startup_restore_active"
 PARTIAL_GUARD_FILE="$TMPDIR/omarchy_window_state_restore_incomplete"
 LOG_FILE="$TMP_ROOT/calls.log"
+STATE_LOG_FILE="$TMP_ROOT/window_state.log"
 
-mkdir -p "$CONFIG_DIR" "$SKETCHY_DIR/plugins" "$TMPDIR"
+mkdir -p "$CONFIG_DIR" "$SKETCHY_DIR/plugins" "$FAKE_BIN" "$TMPDIR"
+
+awk '/cat > "\$AEROSPACE_DIR\/omarchy_space_state.sh" << '\''SPACE_STATE_EOF'\''/{in_block=1; next} /^SPACE_STATE_EOF$/{exit} in_block{print}' \
+  "$ROOT/install.sh" > "$CONFIG_DIR/omarchy_space_state.sh"
 
 awk '/cat > "\$AEROSPACE_DIR\/startup_restore.sh" << '\''STARTUP_RESTORE_EOF'\''/{in_block=1; next} /^STARTUP_RESTORE_EOF$/{exit} in_block{print}' \
   "$ROOT/install.sh" > "$CONFIG_DIR/startup_restore.sh"
@@ -64,21 +69,34 @@ EOF
 cat > "$SKETCHY_DIR/plugins/restore_status.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+mode="${1:-missing}"
 guard=0
 partial=0
 [[ -e "$TMPDIR/omarchy_window_state_startup_restore_active" ]] && guard=1
 [[ -e "$TMPDIR/omarchy_window_state_restore_incomplete" ]] && partial=1
-printf 'status:%s:guard=%s:partial=%s\n' "${1:-missing}" "$guard" "$partial" >> "$OMARCHY_TEST_LOG"
+if [[ "${OMARCHY_TEST_HANG_STATUS_MODE:-}" == "$mode" ]]; then
+  printf 'status-start:%s:guard=%s:partial=%s\n' "$mode" "$guard" "$partial" >> "$OMARCHY_TEST_LOG"
+  sleep 30
+fi
+printf 'status:%s:guard=%s:partial=%s\n' "$mode" "$guard" "$partial" >> "$OMARCHY_TEST_LOG"
+EOF
+
+cat > "$FAKE_BIN/sketchybar" <<'EOF'
+#!/usr/bin/env bash
+printf 'sketchybar:%s\n' "$*" >> "$OMARCHY_TEST_LOG"
 EOF
 
 chmod +x "$CONFIG_DIR"/*.sh
 chmod +x "$SKETCHY_DIR/plugins/"*.sh
+chmod +x "$FAKE_BIN/sketchybar"
 export OMARCHY_TEST_LOG="$LOG_FILE"
+export OMARCHY_WINDOW_STATE_LOG="$STATE_LOG_FILE"
+export PATH="$FAKE_BIN:$PATH"
 
 "$CONFIG_DIR/startup_restore.sh"
 
 expected=$'status:active:guard=1:partial=0\nrepair\nrestore\nrestore-attempts:30 delay:1\nrepair-detached\nstatus:complete:guard=0:partial=0'
-actual="$(cat "$LOG_FILE")"
+actual="$(grep -v '^sketchybar:' "$LOG_FILE")"
 [[ "$actual" == "$expected" ]]
 [[ ! -e "$GUARD_FILE" ]]
 
@@ -86,7 +104,7 @@ actual="$(cat "$LOG_FILE")"
 OMARCHY_FAIL_RESTORE=1 OMARCHY_STARTUP_INCOMPLETE_CLEAR_DELAY=0 "$CONFIG_DIR/startup_restore.sh"
 
 expected=$'status:active:guard=1:partial=0\nrepair\nrestore\nrestore-attempts:30 delay:1\nrepair-detached\nstatus:incomplete:guard=0:partial=1'
-actual="$(cat "$LOG_FILE")"
+actual="$(grep -v '^sketchybar:' "$LOG_FILE")"
 [[ "$actual" == "$expected" ]]
 [[ ! -e "$GUARD_FILE" ]]
 [[ -e "$PARTIAL_GUARD_FILE" ]]
@@ -102,11 +120,14 @@ for _ in {1..30}; do
   sleep 0.2
 done
 
-expected=$'status:active:guard=1:partial=0\nrepair\nrestore\nrestore-attempts:30 delay:1\nrepair-detached\nstatus:incomplete:guard=0:partial=1\nsave:manual:startup-incomplete-timeout\nstatus:complete:guard=0:partial=0'
-actual="$(cat "$LOG_FILE")"
-[[ "$actual" == "$expected" ]]
 [[ ! -e "$GUARD_FILE" ]]
 [[ ! -e "$PARTIAL_GUARD_FILE" ]]
+grep -q '^status:active:guard=1:partial=0$' "$LOG_FILE"
+grep -q '^repair$' "$LOG_FILE"
+grep -q '^restore$' "$LOG_FILE"
+grep -q '^repair-detached$' "$LOG_FILE"
+[[ "$(grep -c '^save:manual:startup-incomplete-timeout$' "$LOG_FILE")" = "1" ]]
+[[ "$(grep -c '^status:complete:guard=0:partial=0$' "$LOG_FILE")" = "1" ]]
 
 : > "$LOG_FILE"
 rm -f "$PARTIAL_GUARD_FILE"
@@ -124,11 +145,39 @@ for _ in {1..30}; do
   sleep 0.2
 done
 
-expected=$'status:active:guard=1:partial=0\nrepair\nrestore\nrestore-attempts:30 delay:1\nrepair-detached\nstatus:incomplete:guard=0:partial=1\nsave:manual:startup-incomplete-timeout\nstatus:complete:guard=0:partial=0'
-actual="$(cat "$LOG_FILE")"
-[[ "$actual" == "$expected" ]]
+actual="$(grep -v '^sketchybar:' "$LOG_FILE")"
 [[ ! -e "$GUARD_FILE" ]]
 [[ ! -e "$PARTIAL_GUARD_FILE" ]]
+grep -q '^status:active:guard=1:partial=0$' <<< "$actual"
+grep -q '^repair$' <<< "$actual"
+grep -q '^restore$' <<< "$actual"
+grep -q '^repair-detached$' <<< "$actual"
+[[ "$(grep -c '^save:manual:startup-incomplete-timeout$' <<< "$actual")" = "1" ]]
+[[ "$(grep '^status:' <<< "$actual" | tail -n 1)" = "status:complete:guard=0:partial=0" ]]
+
+: > "$LOG_FILE"
+rm -f "$PARTIAL_GUARD_FILE"
+started_seconds="$(date +%s)"
+OMARCHY_FAIL_RESTORE=1 \
+  OMARCHY_TEST_HANG_STATUS_MODE=incomplete \
+  OMARCHY_RESTORE_STATUS_TIMEOUT_SECONDS=2 \
+  OMARCHY_STARTUP_INCOMPLETE_CLEAR_DELAY=1 \
+  OMARCHY_STARTUP_INCOMPLETE_CLEAR_ATTEMPTS=1 \
+  "$CONFIG_DIR/startup_restore.sh"
+finished_seconds="$(date +%s)"
+
+for _ in {1..30}; do
+  [[ ! -e "$PARTIAL_GUARD_FILE" ]] && break
+  sleep 0.2
+done
+
+[[ $((finished_seconds - started_seconds)) -lt 8 ]]
+[[ ! -e "$GUARD_FILE" ]]
+[[ ! -e "$PARTIAL_GUARD_FILE" ]]
+grep -Eq '^status-start:incomplete:guard=0:partial=[01]$' "$LOG_FILE"
+grep -q '^save:manual:startup-incomplete-timeout$' "$LOG_FILE"
+grep -q 'restore status update timed out or failed: incomplete' "$STATE_LOG_FILE"
+[[ "$(grep '^status:' "$LOG_FILE" | tail -n 1)" = "status:complete:guard=0:partial=0" ]]
 
 /usr/bin/perl -0777 -e '
   my $source = <>;

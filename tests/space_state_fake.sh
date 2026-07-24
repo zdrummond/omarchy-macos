@@ -21,6 +21,13 @@ cmd="${1:-}"
 shift || true
 
 case "$cmd" in
+  list-monitors)
+    if [[ "${OMARCHY_FAKE_HANG_MONITORS:-0}" == "1" ]]; then
+      sleep 30
+      exit 0
+    fi
+    printf '1|Built-in Retina Display|1\n'
+    ;;
   list-windows)
     format="%{window-id}"
     while [[ $# -gt 0 ]]; do
@@ -82,5 +89,14 @@ if [[ "$actual" != "$expected" ]]; then
   printf 'expected moves:\n%s\nactual moves:\n%s\n' "$expected" "$actual" >&2
   exit 1
 fi
+
+started_seconds="$(date +%s)"
+if OMARCHY_FAKE_HANG_MONITORS=1 OMARCHY_COMMAND_TIMEOUT_SECONDS=1 \
+  omarchy_monitor_rows_by_slot >/dev/null 2>&1; then
+  printf 'hung monitor query unexpectedly succeeded\n' >&2
+  exit 1
+fi
+finished_seconds="$(date +%s)"
+[[ $((finished_seconds - started_seconds)) -lt 5 ]]
 
 printf 'space_state_fake.sh: all checks passed\n'

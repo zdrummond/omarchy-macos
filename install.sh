@@ -1253,6 +1253,7 @@ if.app-name-regex-substring = '1Password'
 run = ['layout floating']
 
 [[on-window-detected]]
+if = 'true'
 run = 'exec-and-forget ~/.config/aerospace/unassigned_window_rehome.sh "\$AEROSPACE_WINDOW_ID"'
 
 # [[on-window-detected]]
@@ -1282,14 +1283,50 @@ write_space_state_helper() {
 # non-1 monitor ids even when only one physical display remains.
 
 OMARCHY_AEROSPACE_BIN="${OMARCHY_AEROSPACE_BIN:-aerospace}"
+OMARCHY_COMMAND_TIMEOUT_SECONDS="${OMARCHY_COMMAND_TIMEOUT_SECONDS:-5}"
+
+omarchy_run_bounded() {
+  local timeout_seconds="$1"
+  shift
+  case "$timeout_seconds" in
+    ''|*[!0-9]*) timeout_seconds=5 ;;
+  esac
+  [ "$timeout_seconds" -gt 0 ] || timeout_seconds=5
+
+  /usr/bin/perl -MPOSIX=:sys_wait_h -e '
+    my $timeout = shift @ARGV;
+    my $pid = fork();
+    exit 127 unless defined $pid;
+    if ($pid == 0) {
+      setpgrp(0, 0);
+      exec @ARGV;
+      exit 127;
+    }
+
+    local $SIG{ALRM} = sub {
+      kill "TERM", -$pid;
+      select undef, undef, undef, 0.1;
+      kill "KILL", -$pid;
+      waitpid($pid, 0);
+      exit 124;
+    };
+
+    alarm $timeout;
+    waitpid($pid, 0);
+    alarm 0;
+    exit(WIFEXITED($?) ? WEXITSTATUS($?) : 128 + WTERMSIG($?));
+  ' "$timeout_seconds" "$@"
+}
 
 omarchy_aerospace_available() {
-  "$OMARCHY_AEROSPACE_BIN" list-monitors --format '%{monitor-id}' >/dev/null 2>&1
+  omarchy_run_bounded "$OMARCHY_COMMAND_TIMEOUT_SECONDS" \
+    "$OMARCHY_AEROSPACE_BIN" list-monitors --format '%{monitor-id}' >/dev/null 2>&1
 }
 
 omarchy_monitor_rows_by_slot() {
   local rows line monitor_id monitor_name
-  rows=$("$OMARCHY_AEROSPACE_BIN" list-monitors --format '%{monitor-id}|%{monitor-name}|%{monitor-appkit-nsscreen-screens-id}' 2>/dev/null) || return 1
+  rows=$(omarchy_run_bounded "$OMARCHY_COMMAND_TIMEOUT_SECONDS" \
+    "$OMARCHY_AEROSPACE_BIN" list-monitors --format '%{monitor-id}|%{monitor-name}|%{monitor-appkit-nsscreen-screens-id}' 2>/dev/null) || return 1
 
   local built_in_rows=()
   local external_rows=()
@@ -1915,6 +1952,8 @@ REPAIR_SPACES_EOF
 
 set -euo pipefail
 
+source "$HOME/.config/aerospace/omarchy_space_state.sh"
+
 TMP_ROOT="${TMPDIR:-/tmp}"
 STARTUP_RESTORE_GUARD="${OMARCHY_WINDOW_STARTUP_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_startup_restore_active}"
 PARTIAL_RESTORE_GUARD="${OMARCHY_WINDOW_PARTIAL_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_restore_incomplete}"
@@ -1927,6 +1966,7 @@ INCOMPLETE_CLEAR_RETRY_DELAY="${OMARCHY_STARTUP_INCOMPLETE_CLEAR_RETRY_DELAY:-5}
 INCOMPLETE_SAVE_WAIT_ATTEMPTS="${OMARCHY_STARTUP_INCOMPLETE_SAVE_WAIT_ATTEMPTS:-6}"
 STARTED_AT="${OMARCHY_STARTUP_RESTORE_STARTED_AT:-$(date +%s)}"
 RESTORE_RESULT="complete"
+RESTORE_STATUS_TIMEOUT="${OMARCHY_RESTORE_STATUS_TIMEOUT_SECONDS:-5}"
 
 log_msg() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >> "$LOG_FILE"
@@ -1934,12 +1974,18 @@ log_msg() {
 
 restore_status() {
   [ -x "$RESTORE_STATUS_HELPER" ] || return 0
-  "$RESTORE_STATUS_HELPER" "$1" >/dev/null 2>&1 || true
+  if ! omarchy_run_bounded "$RESTORE_STATUS_TIMEOUT" \
+    "$RESTORE_STATUS_HELPER" "$1" >/dev/null 2>&1; then
+    log_msg "restore status update timed out or failed: $1"
+  fi
 }
 
 refresh_space_labels() {
   command -v sketchybar >/dev/null 2>&1 || return 0
-  sketchybar --trigger front_app_switched >/dev/null 2>&1 || true
+  if ! omarchy_run_bounded "$RESTORE_STATUS_TIMEOUT" \
+    sketchybar --trigger front_app_switched >/dev/null 2>&1; then
+    log_msg "SketchyBar space-label refresh timed out or failed"
+  fi
 }
 
 schedule_incomplete_clear() {
@@ -2000,8 +2046,17 @@ schedule_incomplete_clear() {
 cleanup() {
   rm -f "$STARTUP_RESTORE_GUARD"
   if [ "$RESTORE_RESULT" = "incomplete" ] || [ -e "$PARTIAL_RESTORE_GUARD" ]; then
-    restore_status incomplete
+    # Schedule durable state cleanup before touching UI. A wedged status bar
+    # must never prevent the incomplete marker from reaching its bounded
+    # expiry path.
     schedule_incomplete_clear
+    restore_status incomplete
+    # The expiry worker may finish while the bounded incomplete update is in
+    # flight. Reconcile once more so a late UI write cannot resurrect a stale
+    # warning after the marker and saved state are already clean.
+    if [ ! -e "$PARTIAL_RESTORE_GUARD" ]; then
+      restore_status complete
+    fi
   else
     restore_status complete
   fi
@@ -3780,6 +3835,35 @@ write_sketchybar_config() {
 # =============================================================================
 
 export CONFIG_DIR="${CONFIG_DIR:-$HOME/.config/sketchybar}"
+
+# A topology event can request a reload while the login-time configuration is
+# still creating items. Only one config process may own the item lifecycle at a
+# time, otherwise different processes can create different portions of the
+# number-row sequence.
+CONFIG_LOCK_DIR="${OMARCHY_SKETCHYBAR_CONFIG_LOCK:-${TMPDIR:-/tmp}/omarchy_sketchybar_config.lock}"
+
+release_config_lock() {
+  rm -rf "$CONFIG_LOCK_DIR"
+}
+
+acquire_config_lock() {
+  if ! mkdir "$CONFIG_LOCK_DIR" 2>/dev/null; then
+    owner_pid=$(cat "$CONFIG_LOCK_DIR/pid" 2>/dev/null || true)
+    if [[ "$owner_pid" =~ ^[0-9]+$ ]] && kill -0 "$owner_pid" 2>/dev/null; then
+      exit 0
+    fi
+    rm -rf "$CONFIG_LOCK_DIR"
+    mkdir "$CONFIG_LOCK_DIR" 2>/dev/null || exit 0
+  fi
+
+  printf '%s\n' "$$" > "$CONFIG_LOCK_DIR/pid"
+  trap release_config_lock EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+}
+
+acquire_config_lock
 source "$CONFIG_DIR/colors.sh"
 
 # ── Bar appearance ────────────────────────────────────────────────────────
@@ -3875,12 +3959,14 @@ source "$HOME/.config/aerospace/omarchy_space_state.sh"
 
 monitors=$(omarchy_monitor_ids_by_slot 2>/dev/null || printf '1')
 slot=0
+space_order=()
 while IFS= read -r monitor_id; do
   [ -n "$monitor_id" ] || continue
   [ "$slot" -gt 9 ] && break
   display=$(omarchy_sketchybar_display_for_slot "$slot" 2>/dev/null || printf '%s\n' $((slot + 1)))
   for sid in 1 2 3 4 5 6 7 8 9 0; do
     name="space.$slot.$sid"
+    space_order+=("$name")
     sketchybar --add item "$name" left \
       --set "$name" \
         display="$display" \
@@ -3914,6 +4000,10 @@ while IFS= read -r monitor_id; do
       label.drawing=off
   slot=$((slot + 1))
 done <<< "$monitors"
+
+if [ "${#space_order[@]}" -gt 0 ]; then
+  sketchybar --order "${space_order[@]}"
+fi
 SPACES_ITEM_EOF
 
   # ── Front app ─────────────────────────────────────────────────────────────
@@ -4184,12 +4274,8 @@ highlight_space() {
       active_key="$focused_key"
     fi
 
-    # Display changes can race with SketchyBar reloads. Make updates
-    # idempotently create missing slot items before setting labels.
-    sketchybar --query "monitor.$slot" >/dev/null 2>&1 ||
-      sketchybar --add item "monitor.$slot" right >/dev/null 2>&1 || true
-    sketchybar --query "spaces_separator.$slot" >/dev/null 2>&1 ||
-      sketchybar --add item "spaces_separator.$slot" left >/dev/null 2>&1 || true
+    # Item creation belongs exclusively to the config build. A highlight can
+    # overlap a reload, so it must only update items that already exist.
     args+=(--set "monitor.$slot" display="$display" label="$slot"
            --set "spaces_separator.$slot" display="$display" icon="|" label.drawing=off)
 
@@ -4219,11 +4305,6 @@ highlight_space() {
       local has_content="$apps"
       local active_label_color=$TEXT
       local idle_label_color=$SUBTEXT
-      # Re-adding an existing item changes SketchyBar's insertion order. Only
-      # create genuinely missing items so concurrent refreshes cannot rotate
-      # the number-row order.
-      sketchybar --query "$name" >/dev/null 2>&1 ||
-        sketchybar --add item "$name" left >/dev/null 2>&1 || true
       if [ -z "$has_content" ]; then
         if [ -z "$alias" ]; then
           label="[empty]"
@@ -4307,9 +4388,12 @@ HIDE_BAR_PLUGIN_EOF
 set -euo pipefail
 
 LOCK_DIR="${TMPDIR:-/tmp}/omarchy_sketchybar_display_reload.lock"
+CONFIG_LOCK_DIR="${OMARCHY_SKETCHYBAR_CONFIG_LOCK:-${TMPDIR:-/tmp}/omarchy_sketchybar_config.lock}"
 LOG_FILE="${OMARCHY_WINDOW_STATE_LOG:-/tmp/omarchy_window_state.log}"
 STATE_FILE="${TMPDIR:-/tmp}/omarchy_sketchybar_display_topology"
 MIN_RELOAD_INTERVAL="${OMARCHY_SKETCHYBAR_DISPLAY_RELOAD_INTERVAL:-15}"
+CONFIG_WAIT_ATTEMPTS="${OMARCHY_SKETCHYBAR_CONFIG_WAIT_ATTEMPTS:-40}"
+CONFIG_WAIT_DELAY="${OMARCHY_SKETCHYBAR_CONFIG_WAIT_DELAY:-0.25}"
 
 topology_signature() {
   if command -v aerospace >/dev/null 2>&1; then
@@ -4322,6 +4406,15 @@ topology_signature() {
 
 now_epoch() {
   date '+%s'
+}
+
+wait_for_config_build() {
+  local attempt=0
+  while [ -d "$CONFIG_LOCK_DIR" ] && [ "$attempt" -lt "$CONFIG_WAIT_ATTEMPTS" ]; do
+    sleep "$CONFIG_WAIT_DELAY"
+    attempt=$((attempt + 1))
+  done
+  [ ! -d "$CONFIG_LOCK_DIR" ]
 }
 
 current_signature="$(topology_signature)"
@@ -4354,6 +4447,12 @@ fi
 
 (
   sleep 1
+  if ! wait_for_config_build; then
+    printf '[%s] sketchybar config still active; deferring topology reload: %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$current_signature" >> "$LOG_FILE" 2>/dev/null || true
+    rm -f "$STATE_FILE"
+    rm -rf "$LOCK_DIR"
+    exit 0
+  fi
   printf '[%s] sketchybar display topology changed; reloading: %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$current_signature" >> "$LOG_FILE" 2>/dev/null || true
   sketchybar --reload >/dev/null 2>&1 || true
   "$HOME/.config/sketchybar/plugins/restore_status.sh" refresh >/dev/null 2>&1 || true
