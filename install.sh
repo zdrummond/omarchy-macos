@@ -72,6 +72,8 @@ WINDOW_STATE_SAVER="$AEROSPACE_DIR/window_state_saver.sh"
 WINDOW_STATE_DEBOUNCED_SAVER="$AEROSPACE_DIR/window_state_debounced_save.sh"
 WINDOW_STATE_MONITOR_MOVE_HELPER="$AEROSPACE_DIR/move_node_to_monitor_and_save.sh"
 RESPONSIVE_LAYOUT_HELPER="$AEROSPACE_DIR/responsive_layout.sh"
+ASSIGNED_WINDOW_REHOME_HELPER="$AEROSPACE_DIR/assigned_window_rehome.sh"
+WORKSPACE_CHANGE_LOG_HELPER="$AEROSPACE_DIR/workspace_change_log.sh"
 MONITOR_FRAME_SRC="$AEROSPACE_DIR/monitor_frame.swift"
 MONITOR_FRAME_BIN="$AEROSPACE_DIR/monitor_frame"
 WINDOW_STATE_SAVE_INTERVAL_SECONDS=900
@@ -1059,6 +1061,7 @@ write_aerospace_config() {
 
 # ── Behavior ──────────────────────────────────────────────────────────────────
 after-startup-command = ['exec-and-forget ~/.config/aerospace/startup_restore.sh']
+exec-on-workspace-change = ['/bin/bash', '-c', '~/.config/aerospace/workspace_change_log.sh "\$AEROSPACE_PREV_WORKSPACE" "\$AEROSPACE_FOCUSED_WORKSPACE"']
 
 # Start Aerospace on login
 start-at-login = true
@@ -1187,62 +1190,62 @@ check-further-callbacks = true
 # monitor is attached, move the app to <monitor><N> manually after launch.
 [[on-window-detected]]
 if.app-id = 'com.apple.mail'
-run = ['move-node-to-workspace 01', 'workspace 01']
+run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 01 "\$AEROSPACE_WINDOW_ID"'
 check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-id = 'com.google.Chrome.app.fmgjjmmmlfnkbppncabfkddbjimcfncm'
-run = ['move-node-to-workspace 01', 'workspace 01']
+run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 01 "\$AEROSPACE_WINDOW_ID"'
 check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Messages'
-run = ['move-node-to-workspace 02', 'workspace 02']
+run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 02 "\$AEROSPACE_WINDOW_ID"'
 check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Signal'
-run = ['move-node-to-workspace 02', 'workspace 02']
+run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 02 "\$AEROSPACE_WINDOW_ID"'
 check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Google Chat'
-run = ['move-node-to-workspace 02', 'workspace 02']
+run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 02 "\$AEROSPACE_WINDOW_ID"'
 check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Spotify|Music'
-run = ['move-node-to-workspace 03', 'workspace 03']
+run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 03 "\$AEROSPACE_WINDOW_ID"'
 check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Ghostty|WezTerm|Warp|iTerm2'
-run = ['move-node-to-workspace 04', 'workspace 04']
+run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 04 "\$AEROSPACE_WINDOW_ID"'
 check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Zed|Antigravity'
-run = ['move-node-to-workspace 05', 'workspace 05']
+run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 05 "\$AEROSPACE_WINDOW_ID"'
 check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-id = 'com.anthropic.claudefordesktop'
-run = ['move-node-to-workspace 06', 'workspace 06']
+run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 06 "\$AEROSPACE_WINDOW_ID"'
 check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-id = 'com.google.GeminiMacOS'
-run = ['move-node-to-workspace 06', 'workspace 06']
+run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 06 "\$AEROSPACE_WINDOW_ID"'
 check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-id = 'com.openai.chat'
-run = ['move-node-to-workspace 06', 'workspace 06']
+run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 06 "\$AEROSPACE_WINDOW_ID"'
 check-further-callbacks = true
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'ChatGPT'
-run = ['move-node-to-workspace 06', 'workspace 06']
+run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 06 "\$AEROSPACE_WINDOW_ID"'
 check-further-callbacks = true
 
 # Keep authentication prompts and password dialogs visible on the current
@@ -1713,6 +1716,71 @@ omarchy_repair_app_assigned_workspaces() {
 SPACE_STATE_EOF
 
   chmod +x "$AEROSPACE_DIR/omarchy_space_state.sh"
+
+  cat > "$ASSIGNED_WINDOW_REHOME_HELPER" << 'ASSIGNED_WINDOW_REHOME_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+target="${1:-}"
+window_id="${2:-${AEROSPACE_WINDOW_ID:-}}"
+LOG_FILE="${OMARCHY_WINDOW_STATE_LOG:-/tmp/omarchy_window_state.log}"
+OMARCHY_AEROSPACE_BIN="${OMARCHY_AEROSPACE_BIN:-aerospace}"
+
+log_msg() {
+  printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+[[ "$target" =~ ^[0-9][0-9]$ ]] || exit 0
+[[ "$window_id" =~ ^[0-9]+$ ]] || exit 0
+
+detected=$("$OMARCHY_AEROSPACE_BIN" list-windows --all \
+  --format '%{window-id}|%{workspace}|%{app-name}|%{app-bundle-id}|%{window-title}' 2>/dev/null |
+  awk -F'|' -v id="$window_id" '$1 == id { print; exit }') || true
+focused=$("$OMARCHY_AEROSPACE_BIN" list-windows --focused \
+  --format '%{window-id}|%{workspace}|%{app-name}|%{app-bundle-id}|%{window-title}' 2>/dev/null |
+  head -n 1) || true
+
+if [ -z "$detected" ]; then
+  log_msg "assigned window callback could not find window=$window_id target=$target focused=${focused:-none}"
+  exit 0
+fi
+
+IFS='|' read -r _ source_workspace app_name bundle_id title <<< "$detected"
+if [ "$source_workspace" = "$target" ]; then
+  log_msg "assigned window detected window=$window_id already=$target app=$app_name bundle=$bundle_id title=$title focused_before=${focused:-none}; no workspace activation"
+  exit 0
+fi
+
+if "$OMARCHY_AEROSPACE_BIN" move-node-to-workspace --window-id "$window_id" "$target" >/dev/null 2>&1; then
+  focused_after=$("$OMARCHY_AEROSPACE_BIN" list-windows --focused \
+    --format '%{window-id}|%{workspace}|%{app-name}|%{app-bundle-id}|%{window-title}' 2>/dev/null |
+    head -n 1) || true
+  log_msg "assigned window moved window=$window_id from=$source_workspace to=$target app=$app_name bundle=$bundle_id title=$title focused_before=${focused:-none} focused_after=${focused_after:-none}; no workspace activation"
+else
+  log_msg "assigned window move failed window=$window_id from=$source_workspace to=$target app=$app_name bundle=$bundle_id title=$title focused_before=${focused:-none}"
+fi
+ASSIGNED_WINDOW_REHOME_EOF
+
+  chmod +x "$ASSIGNED_WINDOW_REHOME_HELPER"
+
+  cat > "$WORKSPACE_CHANGE_LOG_HELPER" << 'WORKSPACE_CHANGE_LOG_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+previous="${1:-unknown}"
+focused_workspace="${2:-unknown}"
+LOG_FILE="${OMARCHY_WINDOW_STATE_LOG:-/tmp/omarchy_window_state.log}"
+OMARCHY_AEROSPACE_BIN="${OMARCHY_AEROSPACE_BIN:-aerospace}"
+
+focused_window=$("$OMARCHY_AEROSPACE_BIN" list-windows --focused \
+  --format '%{window-id}|%{workspace}|%{app-name}|%{app-bundle-id}|%{window-title}' 2>/dev/null |
+  head -n 1) || true
+printf '[%s] workspace focus changed from=%s to=%s focused_window=%s\n' \
+  "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$previous" "$focused_workspace" "${focused_window:-none}" \
+  >> "$LOG_FILE" 2>/dev/null || true
+WORKSPACE_CHANGE_LOG_EOF
+
+  chmod +x "$WORKSPACE_CHANGE_LOG_HELPER"
 
   cat > "$AEROSPACE_DIR/unassigned_window_rehome.sh" << 'UNASSIGNED_WINDOW_REHOME_EOF'
 #!/usr/bin/env bash
@@ -2848,6 +2916,8 @@ set -u
 
 HELPER="$WINDOW_STATE_WRAPPER"
 LOG_FILE="$WINDOW_STATE_LOG"
+LOG_DAY_FILE="\${OMARCHY_WINDOW_STATE_LOG_DAY_FILE:-\${LOG_FILE}.day}"
+LOG_ARCHIVE="\${OMARCHY_WINDOW_STATE_LOG_ARCHIVE:-\${LOG_FILE}.1}"
 INTERVAL="\${OMARCHY_WINDOW_STATE_SAVE_INTERVAL:-$WINDOW_STATE_SAVE_INTERVAL_SECONDS}"
 SAVE_WAIT_ATTEMPTS="\${OMARCHY_WINDOW_SAVE_WAIT_ATTEMPTS:-5}"
 PENDING_MAX_SECONDS="\${OMARCHY_STARTUP_RESTORE_PENDING_MAX_SECONDS:-300}"
@@ -2857,7 +2927,34 @@ REFRESH_RESTART_MARKER="\${OMARCHY_WINDOW_REFRESH_RESTART_MARKER:-\${TMPDIR:-/tm
 RESTORE_STATUS_HELPER="$HOME/.config/sketchybar/plugins/restore_status.sh"
 sleep_pid=""
 
+rotate_log_if_needed() {
+  local today recorded_day rotate_lock filtered_log
+  today="\$(date '+%Y-%m-%d')"
+  recorded_day="\$(cat "\$LOG_DAY_FILE" 2>/dev/null || true)"
+  [ "\$recorded_day" = "\$today" ] && return 0
+
+  rotate_lock="\${LOG_FILE}.rotate.lock"
+  mkdir "\$rotate_lock" 2>/dev/null || return 0
+  recorded_day="\$(cat "\$LOG_DAY_FILE" 2>/dev/null || true)"
+  if [ "\$recorded_day" != "\$today" ]; then
+    if [ -z "\$recorded_day" ]; then
+      # First run after this retention policy is installed: discard entries
+      # older than today instead of preserving an unbounded legacy log.
+      filtered_log="\${LOG_FILE}.today.\$\$"
+      awk -v prefix="[\$today" 'index(\$0, prefix) == 1 { print }' "\$LOG_FILE" > "\$filtered_log" 2>/dev/null || true
+      cp "\$filtered_log" "\$LOG_FILE" 2>/dev/null || true
+      rm -f "\$filtered_log"
+    elif [ -s "\$LOG_FILE" ]; then
+      cp "\$LOG_FILE" "\$LOG_ARCHIVE" 2>/dev/null || true
+      : > "\$LOG_FILE"
+    fi
+    printf '%s\n' "\$today" > "\$LOG_DAY_FILE" 2>/dev/null || true
+  fi
+  rmdir "\$rotate_lock" 2>/dev/null || true
+}
+
 log_msg() {
+  rotate_log_if_needed
   printf '[%s] %s\n' "\$(date '+%Y-%m-%dT%H:%M:%S%z')" "\$*" >> "\$LOG_FILE"
 }
 
@@ -2929,6 +3026,7 @@ shutdown() {
 
 trap shutdown TERM INT HUP
 
+rotate_log_if_needed
 log_msg "window state saver started; interval \${INTERVAL}s"
 seed_startup_restore_guard
 

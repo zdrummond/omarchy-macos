@@ -188,13 +188,13 @@ grep -q 'restore status update timed out or failed: incomplete' "$STATE_LOG_FILE
   die "unexpected Gmail app-name workspace rule\n"
     if $source =~ /if\.app-name-regex-substring = '\''Gmail'\''/;
   die "missing Apple Mail window-detected assignment\n"
-    unless $source =~ /if\.app-id = '\''com\.apple\.mail'\''\nrun = \['\''move-node-to-workspace 01'\'', '\''workspace 01'\''\]/;
+    unless $source =~ /if\.app-id = '\''com\.apple\.mail'\''\nrun = '\''exec-and-forget ~\/\.config\/aerospace\/assigned_window_rehome\.sh 01 "(?:\\)?\$AEROSPACE_WINDOW_ID"'\''/;
   die "missing Gmail window-detected assignment\n"
-    unless $source =~ /if\.app-id = '\''com\.google\.Chrome\.app\.fmgjjmmmlfnkbppncabfkddbjimcfncm'\''\nrun = \['\''move-node-to-workspace 01'\'', '\''workspace 01'\''\]/;
+    unless $source =~ /if\.app-id = '\''com\.google\.Chrome\.app\.fmgjjmmmlfnkbppncabfkddbjimcfncm'\''\nrun = '\''exec-and-forget ~\/\.config\/aerospace\/assigned_window_rehome\.sh 01 "(?:\\)?\$AEROSPACE_WINDOW_ID"'\''/;
   die "missing Gmail shell workspace assignment\n"
     unless $source =~ /\*Mail\*\|\*Gmail\*\) printf '\''01\\n'\''; return 0 ;;/;
   die "missing Google Chat window-detected assignment\n"
-    unless $source =~ /if\.app-name-regex-substring = '\''Google Chat'\''\nrun = \['\''move-node-to-workspace 02'\'', '\''workspace 02'\''\]/;
+    unless $source =~ /if\.app-name-regex-substring = '\''Google Chat'\''\nrun = '\''exec-and-forget ~\/\.config\/aerospace\/assigned_window_rehome\.sh 02 "(?:\\)?\$AEROSPACE_WINDOW_ID"'\''/;
   die "missing Google Chat canonical workspace assignment\n"
     unless $source =~ /return "02" if \$app =~ \/Messages\|Signal\|Google Chat\/i;/;
 ' "$ROOT/install.sh"

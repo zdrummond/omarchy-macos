@@ -209,6 +209,16 @@ snapshot or login-time app launch cannot crowd the message workspace.
   new window away.
 - **Unassigned rehome records layout changes.** After launch-time catch-all
   movement, the updated layout is recorded and responsive layout is rechecked.
+- **Automatic app placement never steals focus.** Window-detected assignment
+  rules move assigned apps to their canonical workspace without activating that
+  workspace. Each assigned-window callback records the detected window id,
+  source and target workspaces, app identity/title, and focused window before
+  and after the move. Every focused-workspace change also records its previous
+  and new workspace and the resulting focused window, so an unsolicited focus
+  change can be correlated and attributed without reproducing it. Omarchy's
+  shared window-state diagnostic log rotates daily and retains only the current
+  log plus one previous-day archive; installing this policy drops older legacy
+  entries.
 
 ## Installer Behavior
 
@@ -223,7 +233,9 @@ snapshot or login-time app launch cannot crowd the message workspace.
 - Regenerates `~/Desktop/omarchy-shortcuts.png` and runs a click-through
   desktop-level shortcut cheatsheet widget during install/refresh and via
   `./omarchy.sh shortcuts-widget`
-- Loads a window-state saver LaunchAgent that saves every 15 minutes and traps launchd termination for best-effort logout/shutdown saves
+- Loads a window-state saver LaunchAgent that saves every 15 minutes, traps
+  launchd termination for best-effort logout/shutdown saves, and rotates its
+  shared diagnostic log daily with one prior-day archive
 - Loads an AeroSpace login LaunchAgent. Launch-time rehome is handled by
   AeroSpace window-detected callbacks, not a Chrome-specific Accessibility
   daemon.

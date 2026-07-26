@@ -55,6 +55,10 @@ grep -q 'startup restore pending guard expired; allowing automatic saves' "$LOG_
     unless $source =~ /start_services\(\).*?mode="\$\{1:-normal\}".*?skip-next-startup-guard.*?launchctl load "\$WINDOW_STATE_SAVER_PLIST".*?rm -f "\$WINDOW_STATE_REFRESH_RESTART_MARKER"/s;
   die "periodic saver must consume a fresh refresh marker without seeding a startup guard\n"
     unless $source =~ /cat > "\$WINDOW_STATE_SAVER" << .*?REFRESH_RESTART_MARKER=.*?seed_startup_restore_guard\(\) \{.*?skip-next-startup-guard.*?config refresh restart; startup restore guard not seeded.*?clear_restore_status.*?return 0.*?pending-window-state-saver/s;
+  die "periodic saver must rotate the shared log daily with one archive\n"
+    unless $source =~ /LOG_DAY_FILE=.*?LOG_ARCHIVE=.*?rotate_log_if_needed\(\).*?cp .*?LOG_ARCHIVE.*?: > .*?LOG_FILE.*?rotate_log_if_needed\nlog_msg "window state saver started/s;
+  die "first rotation must drop legacy entries older than today\n"
+    unless $source =~ /First run after this retention policy is installed: discard entries.*?awk -v prefix=.*?cp .*?LOG_FILE/s;
 ' "$ROOT/install.sh"
 
 printf 'window_state_saver_fake.sh: all checks passed\n'
