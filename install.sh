@@ -4025,32 +4025,23 @@ write_skhd_config() {
 # =============================================================================
 # skhd — global hotkey daemon
 # Left Option is Omarchy SUPER. Right Option remains native macOS input.
-# Terminal process maps pass all configured chords through for Option/Meta use.
+# Right Option and Native Input preserve terminal Option/Meta use.
 # =============================================================================
 
-# Fn+Escape is deliberately available even in terminal apps.
+# Fn+Escape is available from every app.
 :: default : ~/.config/aerospace/native_input_mode.sh off
 :: native_input : ~/.config/aerospace/native_input_mode.sh on
 fn - escape ; native_input
 native_input < fn - escape ; default
 SKHD_EOF
 
-  # Every normal-mode binding uses the same terminal pass-through policy.
-  # Repeating the process map in generated skhd syntax keeps Fn+Escape active
-  # in terminals, unlike skhd's all-or-nothing application blacklist.
+  # Left Option is Omarchy Super in every app, including terminals. Right
+  # Option remains unclaimed for native input, and Fn+Escape provides a full
+  # passthrough mode for terminal workflows that need the left key too.
   write_binding() {
     local chord="$1"
     local command="$2"
-    {
-      printf '%s [\n' "$chord"
-      printf '  "Ghostty" ~\n'
-      printf '  "WezTerm" ~\n'
-      printf '  "Warp" ~\n'
-      printf '  "iTerm2" ~\n'
-      printf '  "Terminal" ~\n'
-      printf '  * : %s\n' "$command"
-      printf ']\n\n'
-    } >> "$SKHD_CFG"
+    printf '%s : %s\n' "$chord" "$command" >> "$SKHD_CFG"
   }
 
   # Discovery, launcher, and canonical window actions.

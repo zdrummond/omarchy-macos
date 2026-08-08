@@ -47,16 +47,16 @@ required_chords=(
 )
 
 for chord in "${required_chords[@]}"; do
-  grep -Fqx "$chord [" "$SKHD_GENERATED" || {
+  grep -Fq "$chord : " "$SKHD_GENERATED" || {
     printf 'missing generated chord: %s\n' "$chord" >&2
     exit 1
   }
 done
 
 for key in 1 2 3 4 5 6 7 8 9 0; do
-  grep -Fqx "lalt - $key [" "$SKHD_GENERATED"
-  grep -Fqx "lalt + shift - $key [" "$SKHD_GENERATED"
-  grep -Fqx "lalt + shift + ctrl - $key [" "$SKHD_GENERATED"
+  grep -Fq "lalt - $key : " "$SKHD_GENERATED"
+  grep -Fq "lalt + shift - $key : " "$SKHD_GENERATED"
+  grep -Fq "lalt + shift + ctrl - $key : " "$SKHD_GENERATED"
 done
 
 grep -Fqx 'fn - escape ; native_input' "$SKHD_GENERATED"
@@ -69,28 +69,14 @@ if grep -Eq '^(alt|ralt)([ +]| -)' "$SKHD_GENERATED"; then
   exit 1
 fi
 
-# Each generated process-map binding must pass through all configured terminals.
-awk '
-  /^.+ \[$/ { in_binding=1; block=$0 "\n"; next }
-  in_binding { block=block $0 "\n" }
-  in_binding && /^]$/ {
-    for (i=1; i<=5; i++) {
-      terminal=(i==1 ? "Ghostty" : i==2 ? "WezTerm" : i==3 ? "Warp" : i==4 ? "iTerm2" : "Terminal")
-      if (index(block, "\"" terminal "\" ~") == 0) {
-        print "missing terminal passthrough for " terminal " in " block > "/dev/stderr"
-        exit 1
-      }
-    }
-    if (index(block, "* : ") == 0) {
-      print "missing fallback command in " block > "/dev/stderr"
-      exit 1
-    }
-    in_binding=0
-    block=""
-  }
-' "$SKHD_GENERATED"
+# Left Option remains Omarchy Super in terminals; right Option and Native Input
+# are the explicit passthrough paths.
+if grep -Eq '^  "(Ghostty|WezTerm|Warp|iTerm2|Terminal)" ~' "$SKHD_GENERATED"; then
+  printf 'terminal-specific passthrough unexpectedly disables Omarchy shortcuts\n' >&2
+  exit 1
+fi
 
-duplicates=$(sed -n 's/ \[$//p' "$SKHD_GENERATED" | sort | uniq -d)
+duplicates=$(sed -n 's/ : .*//p' "$SKHD_GENERATED" | sort | uniq -d)
 [ -z "$duplicates" ] || {
   printf 'duplicate generated hotkey owners:\n%s\n' "$duplicates" >&2
   exit 1

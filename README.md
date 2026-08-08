@@ -43,10 +43,10 @@ Regenerate and restart the desktop shortcut cheatsheet widget:
 ```
 
 Left Option is the Omarchy Super key. Right Option remains native macOS input,
-including Option-arrow text navigation. In Ghostty, WezTerm, Warp, iTerm2, and
-Terminal, both Option keys pass through for terminal Meta input. Press
-`Fn+Escape` to toggle Native Input mode when an application needs every global
-shortcut disabled; SketchyBar displays `Native Input` until it is toggled off.
+including Option-arrow text navigation and terminal Meta input. Left Option
+remains Omarchy Super in terminals. Press `Fn+Escape` to toggle Native Input
+mode when an application needs both Option keys or every global shortcut
+disabled; SketchyBar displays `Native Input` until it is toggled off.
 See [SHORTCUTS.md](SHORTCUTS.md) for the complete map.
 
 The exact AeroSpace window/workspace layout is saved automatically every 15

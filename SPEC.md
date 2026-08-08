@@ -7,8 +7,9 @@ Bring the [Omarchy](https://omarchy.org/) / Hyprland Linux tiling workflow to ma
 ## Design Principles
 
 - **Left Option (⌥) = SUPER.** Left Option mirrors Hyprland's SUPER key;
-  right Option remains native macOS input. Configured terminal apps receive
-  both Option keys unchanged so Option/Meta input keeps working.
+  right Option remains native macOS input in every app, including terminals.
+  `Fn+Escape` temporarily releases left Option when a terminal workflow needs
+  both Option/Meta keys.
 - **Current Omarchy navigation where macOS permits it.** Left Option plus arrow
   keys controls window focus/movement; right Option plus arrow keys retains
   native macOS text navigation and selection.
@@ -95,14 +96,13 @@ snapshot or login-time app launch cannot crowd the message workspace.
 ## Key Behaviors
 
 - **Hotkey compatibility profile.** skhd owns the user-facing global hotkeys so
-  bindings can distinguish left from right Option and pass through per app.
-  Left Option is Omarchy Super in normal GUI apps. Right Option is never claimed
-  by Omarchy and retains native macOS text navigation. Ghostty, WezTerm, Warp,
-  iTerm2, and Terminal receive both Option keys unchanged, so overlapping
-  Omarchy actions do not fire while those apps are focused. Native
-  Option-arrow movement and Option-Shift-arrow selection therefore remain
-  available everywhere: through right Option in GUI apps and either Option in
-  configured terminals. Standard Command-Tab remains the macOS app switcher.
+  bindings can distinguish left from right Option. Left Option is Omarchy Super
+  in every app, including terminals. Right Option is never claimed by Omarchy
+  and retains native macOS text navigation and terminal Meta input. A terminal
+  workflow that needs both Option keys can toggle Native Input with
+  `Fn+Escape`. Native Option-arrow movement and Option-Shift-arrow selection
+  remain available everywhere through right Option. Standard Command-Tab
+  remains the macOS app switcher.
   Equal and Minus resize bindings are emitted as ANSI keycodes because skhd
   0.3.9 does not recognize those names as key literals.
 - **Native Input escape hatch.** `Fn+Escape` toggles a cross-daemon Native Input

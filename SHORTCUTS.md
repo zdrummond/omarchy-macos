@@ -1,12 +1,12 @@
 # omarchy-macos Keyboard Shortcuts
 
 **Left Option (`L⌥`) is Omarchy Super. Right Option (`R⌥`) remains native
-macOS input.** In Ghostty, WezTerm, Warp, iTerm2, and Terminal, both Option keys
-pass through so Option/Meta input continues to work; overlapping Omarchy
-shortcuts do not fire while those apps are focused.
+macOS input, including terminal Meta input.** Left Option shortcuts work in
+every app, including Ghostty, WezTerm, Warp, iTerm2, and Terminal.
 
 Press **Fn + Escape** to toggle Native Input mode. It temporarily disables all
-Omarchy global shortcuts until Fn + Escape is pressed again.
+Omarchy global shortcuts until Fn + Escape is pressed again, making both Option
+keys available to the focused terminal or application.
 
 ## Workspaces
 

@@ -46,8 +46,9 @@ not remembered bindings:
 ## Important invariants
 
 - Left Option (`L⌥`) is the macOS stand-in for Omarchy's Super modifier. Right
-  Option remains native macOS input, and configured terminals receive both
-  Option keys unchanged.
+  Option remains native macOS input everywhere. Left Option remains Super in
+  terminals; `Fn+Escape` temporarily releases it when both Option keys are
+  needed for native or Meta input.
 - Workspaces are two digits: `<monitor-slot><key>`. Slot `0` is the built-in
   display; attached external displays use slots `1` through `3`.
 - Assigned apps belong in their canonical named workspace, but automatic

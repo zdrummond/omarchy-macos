@@ -1,7 +1,7 @@
 # Omarchy Hotkey Alignment Plan
 
-Status: Phase 1 is implemented in the repository generator but has not been
-installed on the Mac. Phases 2–5 remain roadmap items.
+Status: Phase 1 is implemented in the repository generator and installed on
+the Mac. Phases 2–5 remain roadmap items.
 
 Upstream reference reviewed 2026-08-07:
 <https://learn.omacom.io/2/the-omarchy-manual/53/hotkeys>
@@ -55,9 +55,9 @@ rollout gates rather than incidental conflicts.
 
 | Risk | Severity | Affected planned bindings | Impact and required response |
 | --- | --- | --- | --- |
-| Native text navigation and selection | **Must preserve** | `⌥+Arrow`, `⌥+⇧+Arrow` | macOS uses Option-Left/Right for word movement, Option-Up/Down for paragraph movement in many editors, and the Shift variants to extend selection. Left Option carries the Omarchy bindings; right Option remains native. Both sides remain native in configured terminals. |
+| Native text navigation and selection | **Must preserve** | `⌥+Arrow`, `⌥+⇧+Arrow` | macOS uses Option-Left/Right for word movement, Option-Up/Down for paragraph movement in many editors, and the Shift variants to extend selection. Left Option carries the Omarchy bindings; right Option remains native everywhere. Native Input temporarily releases both sides. |
 | VoiceOver modifier | **Accepted on this machine** | Every `⌥+⌃+…` chord, especially no-follow workspace movement and monitor movement | Control-Option is VoiceOver's default `VO` modifier, but VoiceOver is not used on this machine. Record that assumption in the installed profile; it is not a rollout gate here. |
-| Terminal Meta/Alt input | **Must preserve** | Existing `⌥+F`, planned `⌥+B/C/L/P/T/V/W`, and any other captured Option-letter chord | Terminal emulators can send Option as Meta/Escape for shells, Emacs, Vim, tmux, and terminal TUIs. Terminal applications must receive their Option chords by default. Conflicting global bindings must be owned by an app-aware layer that can pass them through when a configured terminal is focused. |
+| Terminal Meta/Alt input | **Must preserve** | Existing `⌥+F`, planned `⌥+B/C/L/P/T/V/W`, and any other captured Option-letter chord | Terminal emulators can send Option as Meta/Escape for shells, Emacs, Vim, tmux, and terminal TUIs. Right Option remains available for Meta input by default. `Fn+Escape` releases left Option too when a workflow needs both sides or conflicts with an Omarchy chord. |
 | Accents, dead keys, and symbols | **Accepted on this machine** | Option-letter, Option-number, `⌥+=`, and `⌥+-` bindings | Globally claimed chords cannot type their alternate character. Dead-key and Option-symbol entry are not used on this machine, so this is documented but not a rollout gate. |
 | App menu shortcuts | **Medium** | Particularly planned `⌥+⌘+…` and `⌥+⇧+⌘+…` chords | macOS apps already use this namespace. Examples include Option-Command-F for search, Option-Command-T for toolbars, Option-Command-C/V for Copy/Paste Style, and Option-Shift-Command-V for Paste and Match Style. A global clipboard or system binding would steal the app command. Inventory the menu bar in the daily-use apps before assigning each chord. |
 | Web and document navigation | **Medium** | `⌥+Tab`, `⌥+Arrow`, `⌥+⇧+Arrow` | Safari can use Option-Tab to move through webpage controls, while Option-Arrows scroll in larger increments when focus is not in text. The planned workspace cycle and focus layer would replace those behaviors. |
@@ -88,13 +88,12 @@ The selected baseline uses side-specific Option ownership rather than
 unconditional Option capture:
 
 1. Preserve ordinary `⌘+Tab` and all unclaimed Option chords.
-2. Left Option is Omarchy Super in normal GUI apps. Right Option is never
-   claimed and retains native word/paragraph navigation and selection.
-3. Preserve terminal Option/Meta input by default. Global bindings move out of
-   AeroSpace's unconditional table and into skhd, whose app-aware process maps
-   pass through Ghostty, WezTerm, Warp, iTerm2, Terminal, and configured
-   additions. While a terminal is focused, terminal input wins and overlapping
-   global window actions do not fire.
+2. Left Option is Omarchy Super in every app, including terminals. Right Option
+   is never claimed and retains native word/paragraph navigation and selection.
+3. Preserve terminal Option/Meta input through right Option by default. Global
+   bindings move out of AeroSpace's unconditional table and into skhd so left
+   Option remains Omarchy Super in terminal apps. `Fn+Escape` releases left
+   Option too when a terminal workflow needs both sides.
 4. Add the cross-daemon Native Input escape hatch specified below before
    expanding the Option-letter layer.
 5. Record VoiceOver and dead-key support as consciously unsupported by this
@@ -158,8 +157,8 @@ updated generated-config tests, `SHORTCUTS.md`, the desktop cheatsheet, and
 | Former workspace | `⌥+⌘+Tab` | Move current back-and-forth behavior here. |
 | Move and follow | `⌥+⇧+1…4` | Change current no-follow behavior to follow the destination. |
 | Move without following | `⌥+⇧+⌃+1…4` | Add explicit no-follow helper; retain 5–0 extensions. |
-| Focus direction | Left `⌥+Arrow` | Use skhd's side-specific modifier support. Right Option remains native; terminal pass-through takes precedence. |
-| Swap direction | Left `⌥+⇧+Arrow` | Use skhd's side-specific modifier support. Right Option remains native; terminal pass-through takes precedence. |
+| Focus direction | Left `⌥+Arrow` | Use skhd's side-specific modifier support. Right Option remains native; Native Input provides full passthrough. |
+| Swap direction | Left `⌥+⇧+Arrow` | Use skhd's side-specific modifier support. Right Option remains native; Native Input provides full passthrough. |
 | Resize horizontally | `⌥+=` / `⌥+-` | Map to AeroSpace width resize steps. |
 | Resize vertically | `⌥+⇧+=` / `⌥+⇧+-` | Map to AeroSpace height resize steps. |
 | Move workspace to monitor | `⌥+⇧+⌃+Arrow` | Extend current left/right helper to all supported directions. |
