@@ -192,7 +192,12 @@ snapshot or login-time app launch cannot crowd the message workspace.
   then a short bounded settle delay allows launch-time activation events to
   drain before AeroSpace switches to the destination workspace and focuses the
   rehomed window. The newly created window must remain in view rather than
-  being pulled back to its source workspace by a late application event.
+  being pulled back to its source workspace by a late application event. A
+  bounded watcher tracks each automatically followed window. If that window
+  closes while its destination remains focused and has become empty, and its
+  source workspace still contains windows, Omarchy returns to the source
+  workspace. It does nothing if the user has navigated elsewhere or another
+  window remains at the destination.
 - **1Password dialogs** are floated so authentication prompts stay usable on
   the current workspace.
 - **Front app label** in bar shows `<workspace> <app name>`

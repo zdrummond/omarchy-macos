@@ -74,6 +74,7 @@ WINDOW_STATE_MONITOR_MOVE_HELPER="$AEROSPACE_DIR/move_node_to_monitor_and_save.s
 RESPONSIVE_LAYOUT_HELPER="$AEROSPACE_DIR/responsive_layout.sh"
 ASSIGNED_WINDOW_REHOME_HELPER="$AEROSPACE_DIR/assigned_window_rehome.sh"
 WORKSPACE_CHANGE_LOG_HELPER="$AEROSPACE_DIR/workspace_change_log.sh"
+REHOMED_WINDOW_CLOSE_WATCHER="$AEROSPACE_DIR/rehomed_window_close_watch.sh"
 MONITOR_FRAME_SRC="$AEROSPACE_DIR/monitor_frame.swift"
 MONITOR_FRAME_BIN="$AEROSPACE_DIR/monitor_frame"
 WINDOW_STATE_SAVE_INTERVAL_SECONDS=900
@@ -1782,6 +1783,71 @@ WORKSPACE_CHANGE_LOG_EOF
 
   chmod +x "$WORKSPACE_CHANGE_LOG_HELPER"
 
+  cat > "$REHOMED_WINDOW_CLOSE_WATCHER" << 'REHOMED_WINDOW_CLOSE_WATCH_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+window_id="${1:-}"
+source_workspace="${2:-}"
+target_workspace="${3:-}"
+LOG_FILE="${OMARCHY_WINDOW_STATE_LOG:-/tmp/omarchy_window_state.log}"
+OMARCHY_AEROSPACE_BIN="${OMARCHY_AEROSPACE_BIN:-aerospace}"
+POLL_INTERVAL="${OMARCHY_REHOME_CLOSE_POLL_INTERVAL:-1}"
+SETTLE_DELAY="${OMARCHY_REHOME_CLOSE_SETTLE_DELAY:-0.5}"
+MAX_SECONDS="${OMARCHY_REHOME_CLOSE_MAX_SECONDS:-21600}"
+
+log_msg() {
+  printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+[[ "$window_id" =~ ^[0-9]+$ ]] || exit 0
+[[ "$source_workspace" =~ ^[0-9][0-9]$ ]] || exit 0
+[[ "$target_workspace" =~ ^[0-9][0-9]$ ]] || exit 0
+case "$MAX_SECONDS" in ''|*[!0-9]*) MAX_SECONDS=21600 ;; esac
+
+deadline=$((SECONDS + MAX_SECONDS))
+while [ "$SECONDS" -lt "$deadline" ]; do
+  window_ids=$("$OMARCHY_AEROSPACE_BIN" list-windows --all --format '%{window-id}' 2>/dev/null) || {
+    sleep "$POLL_INTERVAL" 2>/dev/null || true
+    continue
+  }
+  if ! grep -qx "$window_id" <<< "$window_ids"; then
+    break
+  fi
+  sleep "$POLL_INTERVAL" 2>/dev/null || true
+done
+
+if [ "$SECONDS" -ge "$deadline" ]; then
+  log_msg "rehomed window close watch expired window=$window_id source=$source_workspace target=$target_workspace"
+  exit 0
+fi
+
+# Let macOS activation and AeroSpace window-destruction events settle. The
+# observed failure briefly focused the source, then bounced to an empty target
+# in the same event burst.
+sleep "$SETTLE_DELAY" 2>/dev/null || true
+
+focused_workspace=$("$OMARCHY_AEROSPACE_BIN" list-workspaces --monitor focused --visible \
+  --format '%{workspace}' 2>/dev/null | head -n 1) || true
+[ "$focused_workspace" = "$target_workspace" ] || exit 0
+
+target_count=$("$OMARCHY_AEROSPACE_BIN" list-windows --workspace "$target_workspace" \
+  --format '%{window-id}' 2>/dev/null | awk 'NF { count++ } END { print count + 0 }') || exit 0
+[ "$target_count" -eq 0 ] || exit 0
+
+source_count=$("$OMARCHY_AEROSPACE_BIN" list-windows --workspace "$source_workspace" \
+  --format '%{window-id}' 2>/dev/null | awk 'NF { count++ } END { print count + 0 }') || exit 0
+[ "$source_count" -gt 0 ] || exit 0
+
+if "$OMARCHY_AEROSPACE_BIN" workspace "$source_workspace" >/dev/null 2>&1; then
+  log_msg "rehomed window closed; returned from empty workspace=$target_workspace to source=$source_workspace window=$window_id"
+else
+  log_msg "rehomed window closed; failed returning from empty workspace=$target_workspace to source=$source_workspace window=$window_id"
+fi
+REHOMED_WINDOW_CLOSE_WATCH_EOF
+
+  chmod +x "$REHOMED_WINDOW_CLOSE_WATCHER"
+
   cat > "$AEROSPACE_DIR/unassigned_window_rehome.sh" << 'UNASSIGNED_WINDOW_REHOME_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1794,6 +1860,7 @@ STARTUP_RESTORE_GUARD="${OMARCHY_WINDOW_STARTUP_RESTORE_GUARD:-$TMP_ROOT/omarchy
 PARTIAL_RESTORE_GUARD="${OMARCHY_WINDOW_PARTIAL_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_restore_incomplete}"
 LOG_FILE="${OMARCHY_WINDOW_STATE_LOG:-/tmp/omarchy_window_state.log}"
 FOLLOW_DELAY="${OMARCHY_REHOME_FOLLOW_DELAY:-0.5}"
+CLOSE_WATCHER="$HOME/.config/aerospace/rehomed_window_close_watch.sh"
 
 log_msg() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >> "$LOG_FILE" 2>/dev/null || true
@@ -1851,6 +1918,9 @@ if "$OMARCHY_AEROSPACE_BIN" move-node-to-workspace --window-id "$window_id" "$ta
   check_responsive_layout "unassigned-window-rehome-$target"
   if follow_rehomed_window "$target"; then
     log_msg "unassigned launch rehome moved and followed $window_id from $workspace to $target: $app_name / $bundle_id"
+    if [ -x "$CLOSE_WATCHER" ]; then
+      "$CLOSE_WATCHER" "$window_id" "$workspace" "$target" >/dev/null 2>&1 &
+    fi
   else
     log_msg "unassigned launch rehome moved $window_id from $workspace to $target but follow failed: $app_name / $bundle_id"
   fi

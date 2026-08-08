@@ -66,6 +66,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     unless $source =~ /target_window_id="\$\{1:-\$\{AEROSPACE_WINDOW_ID:-\}\}"/ &&
            $source !~ /list-windows --focused --format '\''%\{window-id\}\|%\{workspace\}\|%\{app-name\}\|%\{app-bundle-id\}'\''/;
 
+  die "successful automatic follow must start the close watcher\n"
+    unless $source =~ /if follow_rehomed_window "\$target"; then.*?"\$CLOSE_WATCHER" "\$window_id" "\$workspace" "\$target" .*?&/s;
+
   die "settled responsive layout must target the detected window id\n"
     unless $source =~ /check_responsive_layout\(\).*?responsive_layout\.sh" "\$reason" "\$window_id"/s &&
            $source =~ /layout --window-id "\$TARGET_WINDOW_ID" accordion horizontal vertical/;
