@@ -263,7 +263,9 @@ snapshot or login-time app launch cannot crowd the message workspace.
   `./omarchy.sh shortcuts-widget`. The widget LaunchAgent starts the app through
   LaunchServices so AppKit can create a window, waits for that app, records its
   child pid for exact cleanup, logs launch/render failures, and redraws after
-  display changes.
+  display changes. Its compact key badges omit the redundant left-side marker,
+  and it lists actionable shortcuts rather than presenting automatic layout
+  behavior as a key chord.
 - Loads a window-state saver LaunchAgent that saves every 15 minutes, traps
   launchd termination for best-effort logout/shutdown saves, and rotates its
   shared diagnostic log daily with one prior-day archive
