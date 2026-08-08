@@ -43,6 +43,9 @@ cat > "$FAKE_BIN/aerospace" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'aerospace:%s\n' "$*" >> "$OMARCHY_TEST_LOG"
+if [[ "$*" == "list-windows --focused --format %{window-id}" ]]; then
+  printf '99\n'
+fi
 EOF
 chmod +x "$FAKE_BIN/aerospace"
 
@@ -70,6 +73,12 @@ export OMARCHY_TEST_LOG="$LOG_FILE"
 
 "$CONFIG_DIR/goto_space.sh" 5 --move
 expected=$'repair\naerospace:move-node-to-workspace 05\nsave:move-node-to-workspace-05\nresponsive:move-node-to-workspace-05'
+actual="$(cat "$LOG_FILE")"
+[[ "$actual" == "$expected" ]]
+
+: > "$LOG_FILE"
+"$CONFIG_DIR/goto_space.sh" 7 --move-follow
+expected=$'repair\naerospace:list-windows --focused --format %{window-id}\naerospace:move-node-to-workspace 07\nswitch:07\naerospace:focus --window-id 99\nsave:move-node-to-workspace-07\nresponsive:move-node-to-workspace-07\nhide-bar'
 actual="$(cat "$LOG_FILE")"
 [[ "$actual" == "$expected" ]]
 

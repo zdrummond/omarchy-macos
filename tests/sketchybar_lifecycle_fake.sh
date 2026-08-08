@@ -45,7 +45,7 @@ done
 sketchybar --add item space.0.1 left
 EOF
 
-for item in front_app monitor display_reload restore_status; do
+for item in front_app monitor display_reload restore_status native_input; do
   : > "$CONFIG_DIR/items/$item.sh"
 done
 

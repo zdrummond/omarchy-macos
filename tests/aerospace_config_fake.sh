@@ -6,15 +6,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 /usr/bin/perl -0777 -e '
   my $source = <>;
 
-  my @move_bindings = map {
-    my $key = $_;
-    my $workspace_key = $key;
-    qr/alt-shift-$key = '\''exec-and-forget ~\/\.config\/aerospace\/goto_space\.sh $workspace_key --move'\''/;
-  } qw(1 2 3 4 5 6 7 8 9 0);
+  die "AeroSpace must not own Option hotkeys; skhd needs side/app awareness\n"
+    if $source =~ /^alt(?:-|\+)/m;
 
-  for my $pattern (@move_bindings) {
-    die "missing move-window keybinding: $pattern\n" unless $source =~ $pattern;
-  }
+  die "missing skhd move-and-follow generation\n"
+    unless $source =~ /write_binding "lalt \+ shift - \$key" "\$HOME\/\.config\/aerospace\/goto_space\.sh \$key --move-follow"/;
+
+  die "missing skhd no-follow generation\n"
+    unless $source =~ /write_binding "lalt \+ shift \+ ctrl - \$key" "\$HOME\/\.config\/aerospace\/goto_space\.sh \$key --move"/;
 
   my @assignments = (
     ["com.apple.mail", "01"],
@@ -83,7 +82,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     unless $source =~ /if ! omarchy_is_named_workspace "\$workspace"; then/;
 
   die "move helper no longer calls aerospace move-node-to-workspace target\n"
-    unless $source =~ /case "\$ACTION" in\n  --move\)\n    aerospace move-node-to-workspace "\$TARGET"/;
+    unless $source =~ /case "\$ACTION" in.*?--move-follow\).*?aerospace move-node-to-workspace "\$TARGET".*?--move\).*?aerospace move-node-to-workspace "\$TARGET"/s;
 
   die "move helper no longer records move-window state changes\n"
     unless $source =~ /window_state_debounced_save\.sh" "move-node-to-workspace-\$TARGET"/;

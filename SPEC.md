@@ -6,8 +6,12 @@ Bring the [Omarchy](https://omarchy.org/) / Hyprland Linux tiling workflow to ma
 
 ## Design Principles
 
-- **Option (⌥) = SUPER.** Every shortcut mirrors Hyprland's SUPER key with ⌥ as a 1:1 substitute.
-- **Vim-style navigation everywhere.** h/j/k/l for focus, movement, and resize.
+- **Left Option (⌥) = SUPER.** Left Option mirrors Hyprland's SUPER key;
+  right Option remains native macOS input. Configured terminal apps receive
+  both Option keys unchanged so Option/Meta input keeps working.
+- **Current Omarchy navigation where macOS permits it.** Left Option plus arrow
+  keys controls window focus/movement; right Option plus arrow keys retains
+  native macOS text navigation and selection.
 - **Catppuccin Mocha color scheme.** Matches Omarchy's default theme (mauve accent for optional active window borders, base for the bar background).
 - **Zero visual clutter.** Disable macOS window animations, uniform 8px gaps, no Dock reliance.
 - **Single idempotent command wrapper.** `./omarchy.sh install` sets everything
@@ -27,10 +31,10 @@ Bring the [Omarchy](https://omarchy.org/) / Hyprland Linux tiling workflow to ma
 - Prefer fake tests and generated-script syntax checks for validation. Do not
   run live restore/save/repair commands against the user's current window state
   unless the requested task requires it and the expected state impact is clear.
-- Generated AeroSpace app-assignment rules and move-window keybindings are part
-  of the contract and must have fake/source tests that fail if an assigned app
-  stops moving to its canonical workspace or `⌥+Shift+<number>` stops invoking
-  the workspace move helper.
+- Generated AeroSpace app-assignment rules and skhd move-window keybindings are
+  part of the contract and must have fake/source tests that fail if an assigned
+  app stops moving to its canonical workspace or `Left ⌥+Shift+<number>` stops
+  invoking the workspace move-and-follow helper.
 - Never let a partial startup layout overwrite a known-good saved state. Login
   and app-launch events are treated as unsafe until startup restore has either
   completed or the bounded startup guard has expired.
@@ -90,6 +94,22 @@ snapshot or login-time app launch cannot crowd the message workspace.
 
 ## Key Behaviors
 
+- **Hotkey compatibility profile.** skhd owns the user-facing global hotkeys so
+  bindings can distinguish left from right Option and pass through per app.
+  Left Option is Omarchy Super in normal GUI apps. Right Option is never claimed
+  by Omarchy and retains native macOS text navigation. Ghostty, WezTerm, Warp,
+  iTerm2, and Terminal receive both Option keys unchanged, so overlapping
+  Omarchy actions do not fire while those apps are focused. Native
+  Option-arrow movement and Option-Shift-arrow selection therefore remain
+  available everywhere: through right Option in GUI apps and either Option in
+  configured terminals. Standard Command-Tab remains the macOS app switcher.
+- **Native Input escape hatch.** `Fn+Escape` toggles a cross-daemon Native Input
+  mode. While active, skhd claims only the exit chord and AeroSpace uses an
+  empty binding mode, so all other shortcuts pass through to macOS and the
+  focused app. SketchyBar becomes visible with a `Native Input` indicator and
+  restores its previous visibility when the mode exits, except that active or
+  incomplete restore warnings keep the bar visible. Login, install/refresh,
+  and service restart reset the mode to normal.
 - **Focus changes do not warp the pointer.** Browser links and buttons must
   receive clicks at the user's chosen cursor position.
 - **Exact reboot restore** is snapshot-based. `./omarchy.sh save-window-state`
@@ -141,7 +161,11 @@ snapshot or login-time app launch cannot crowd the message workspace.
   builds are serialized, only the configuration build creates space items, and
   every completed build explicitly restores number-row order (`1` through `0`)
   so login-time highlights and topology reloads cannot rotate the bar.
-- **Bar visibility defaults off.** SketchyBar starts hidden and toggles with `⌥ + Z`; `⌥+1-0` workspace switches and `⌥+Tab` hide it again. Press-to-peek is disabled because the modifier polling/repaint path can make SketchyBar unresponsive on multi-monitor setups.
+- **Bar visibility defaults off.** SketchyBar starts hidden and toggles with
+  `Left ⌥+Z`; workspace switches hide it again except while Native Input or a
+  restore warning requires visible status. Press-to-peek is disabled because
+  the modifier polling/repaint path can make SketchyBar unresponsive on
+  multi-monitor setups.
 - **Status alert indicator** temporarily shows SketchyBar with
   `Restoring windows` during startup restore, then hides the indicator and
   restores the previous bar visibility when restore completes. If restore is
@@ -168,10 +192,9 @@ snapshot or login-time app launch cannot crowd the message workspace.
   Restarting the window-state saver during `refresh` is not a login/startup
   restore: the refresh path suppresses that restart's one-shot pending startup
   guard, so it must not show `Restoring windows` or block automatic saves.
-- **Window discovery** includes `⌥+Up` for a readable all-window picker,
-  `⌥+Shift+Up` for Mission Control / expose, plus `⌥+Ctrl+Tab` and
-  `⌥+Ctrl+Shift+Tab` to cycle through every AeroSpace-managed window across
-  workspaces.
+- **Window discovery** includes `Left ⌥+K` for the shortcut reference,
+  `Left ⌥+Command+Up` for Mission Control / expose, plus `Ctrl+Tab` and
+  `Ctrl+Shift+Tab` to cycle windows on the focused workspace.
 - **Launch rehome protects named spaces.** A named workspace is any workspace
   with an explicit category assignment/alias such as Mail, Msg, Music, Terms,
   Editors, or Agents. Space key `0` is unnamed and is reserved as the fallback
@@ -231,7 +254,7 @@ snapshot or login-time app launch cannot crowd the message workspace.
 - Writes all config files inline from the script (no external dotfiles repo required)
 - Disables macOS window animations (`NSAutomaticWindowAnimationsEnabled`, `NSWindowResizeTime`)
 - Starts the core services via `brew services`; JankyBorders is installed, configured, and started only when `OMARCHY_ENABLE_BORDERS=1`
-- Keeps SketchyBar hidden by default, binds `⌥ + Z` to an explicit toggle,
+- Keeps SketchyBar hidden by default, binds `Left ⌥+Z` to an explicit toggle,
   hides the bar after workspace switches, adds a temporary restore-status item
   for startup restore, and unloads the old `bar_toggle` LaunchAgent if present
 - Writes a dependency-light Perl window-state helper using macOS's system Perl and `JSON::PP`; no extra package is required for saved reboot restore
@@ -246,11 +269,11 @@ snapshot or login-time app launch cannot crowd the message workspace.
   daemon.
 - Writes `~/.config/aerospace/accessibility_report.sh` and wires it to a
   SketchyBar warning item for stale Accessibility permissions
+- Writes the Native Input mode helper, resets that mode during service startup,
+  and generates exactly one owner for each global binding
 - Leaves an install marker at `~/.omarchy-macos-backup/.installed` to prevent duplicate installs
 - `revert` stops services, unloads the LaunchAgent, removes configs, restores backups, uninstalls packages
 
 ## Out of Scope (not implemented)
 
 - Slack/Discord workspace assignment (commented out, intentionally left for user to enable)
-- Direct skhd trigger for Raycast (user configures ⌥+Space in Raycast settings instead)
-- Multi-monitor workspace movement beyond left/right (`alt-ctrl-shift-h/l`)

@@ -1,6 +1,7 @@
 # Omarchy Hotkey Alignment Plan
 
-Status: planning document; these are not installed bindings yet.
+Status: Phase 1 is implemented in the repository generator but has not been
+installed on the Mac. Phases 2–5 remain roadmap items.
 
 Upstream reference reviewed 2026-08-07:
 <https://learn.omacom.io/2/the-omarchy-manual/53/hotkeys>
@@ -20,13 +21,14 @@ consistently:
 
 | Omarchy modifier | macOS key |
 | --- | --- |
-| Super | Option (`⌥`) |
+| Super | Left Option (`L⌥`) |
 | Alt | Control (`⌃`) |
 | Ctrl | Command (`⌘`) |
 | Shift | Shift (`⇧`) |
 
-Examples: Omarchy `Super+Alt+Space` becomes `⌥+⌃+Space`, and
-`Super+Ctrl+L` becomes `⌥+⌘+L`. Plain macOS `⌘+Tab` remains untouched.
+Examples: Omarchy `Super+Alt+Space` becomes `L⌥+⌃+Space`, and
+`Super+Ctrl+L` becomes `L⌥+⌘+L`. Right Option remains native and plain macOS
+`⌘+Tab` remains untouched.
 
 ## Current high-impact mismatches
 
@@ -53,7 +55,7 @@ rollout gates rather than incidental conflicts.
 
 | Risk | Severity | Affected planned bindings | Impact and required response |
 | --- | --- | --- | --- |
-| Native text navigation and selection | **Must preserve** | `⌥+Arrow`, `⌥+⇧+Arrow` | macOS uses Option-Left/Right for word movement, Option-Up/Down for paragraph movement in many editors, and the Shift variants to extend selection. These chords will remain native and will not become global Omarchy bindings. |
+| Native text navigation and selection | **Must preserve** | `⌥+Arrow`, `⌥+⇧+Arrow` | macOS uses Option-Left/Right for word movement, Option-Up/Down for paragraph movement in many editors, and the Shift variants to extend selection. Left Option carries the Omarchy bindings; right Option remains native. Both sides remain native in configured terminals. |
 | VoiceOver modifier | **Accepted on this machine** | Every `⌥+⌃+…` chord, especially no-follow workspace movement and monitor movement | Control-Option is VoiceOver's default `VO` modifier, but VoiceOver is not used on this machine. Record that assumption in the installed profile; it is not a rollout gate here. |
 | Terminal Meta/Alt input | **Must preserve** | Existing `⌥+F`, planned `⌥+B/C/L/P/T/V/W`, and any other captured Option-letter chord | Terminal emulators can send Option as Meta/Escape for shells, Emacs, Vim, tmux, and terminal TUIs. Terminal applications must receive their Option chords by default. Conflicting global bindings must be owned by an app-aware layer that can pass them through when a configured terminal is focused. |
 | Accents, dead keys, and symbols | **Accepted on this machine** | Option-letter, Option-number, `⌥+=`, and `⌥+-` bindings | Globally claimed chords cannot type their alternate character. Dead-key and Option-symbol entry are not used on this machine, so this is documented but not a rollout gate. |
@@ -82,19 +84,17 @@ References for the native behavior above:
 
 ### Required policy before implementation
 
-The recommended safe baseline is a hybrid rather than unconditional Option
-capture:
+The selected baseline uses side-specific Option ownership rather than
+unconditional Option capture:
 
 1. Preserve ordinary `⌘+Tab` and all unclaimed Option chords.
-2. Never install global `⌥+Arrow` or `⌥+⇧+Arrow` bindings on this profile.
-   Keep native word/paragraph navigation and selection. Retain H/J/K/L as the
-   macOS window-navigation adaptation even though current Omarchy uses arrows.
-3. Preserve terminal Option/Meta input by default. Any conflicting
-   Option-letter binding must move out of AeroSpace's unconditional binding
-   table and into an app-aware hotkey layer with pass-through rules for
-   Ghostty, WezTerm, Warp, iTerm, Terminal, and configured additions. The
-   tradeoff is explicit: while a terminal is focused, Meta input wins and the
-   overlapping global window action does not fire.
+2. Left Option is Omarchy Super in normal GUI apps. Right Option is never
+   claimed and retains native word/paragraph navigation and selection.
+3. Preserve terminal Option/Meta input by default. Global bindings move out of
+   AeroSpace's unconditional table and into skhd, whose app-aware process maps
+   pass through Ghostty, WezTerm, Warp, iTerm2, Terminal, and configured
+   additions. While a terminal is focused, terminal input wins and overlapping
+   global window actions do not fire.
 4. Add the cross-daemon Native Input escape hatch specified below before
    expanding the Option-letter layer.
 5. Record VoiceOver and dead-key support as consciously unsupported by this
@@ -158,8 +158,8 @@ updated generated-config tests, `SHORTCUTS.md`, the desktop cheatsheet, and
 | Former workspace | `⌥+⌘+Tab` | Move current back-and-forth behavior here. |
 | Move and follow | `⌥+⇧+1…4` | Change current no-follow behavior to follow the destination. |
 | Move without following | `⌥+⇧+⌃+1…4` | Add explicit no-follow helper; retain 5–0 extensions. |
-| Focus direction | Upstream `⌥+Arrow`; macOS adaptation `⌥+H/J/K/L` | Keep H/J/K/L so native Option-arrow text navigation remains available. Terminal pass-through takes precedence when a terminal is focused. |
-| Swap direction | Upstream `⌥+⇧+Arrow`; macOS adaptation `⌥+⇧+H/J/K/L` | Keep H/J/K/L so native Option-Shift-arrow selection remains available. Terminal pass-through takes precedence when a terminal is focused. |
+| Focus direction | Left `⌥+Arrow` | Use skhd's side-specific modifier support. Right Option remains native; terminal pass-through takes precedence. |
+| Swap direction | Left `⌥+⇧+Arrow` | Use skhd's side-specific modifier support. Right Option remains native; terminal pass-through takes precedence. |
 | Resize horizontally | `⌥+=` / `⌥+-` | Map to AeroSpace width resize steps. |
 | Resize vertically | `⌥+⇧+=` / `⌥+⇧+-` | Map to AeroSpace height resize steps. |
 | Move workspace to monitor | `⌥+⇧+⌃+Arrow` | Extend current left/right helper to all supported directions. |

@@ -42,6 +42,13 @@ Regenerate and restart the desktop shortcut cheatsheet widget:
 ./omarchy.sh shortcuts-widget
 ```
 
+Left Option is the Omarchy Super key. Right Option remains native macOS input,
+including Option-arrow text navigation. In Ghostty, WezTerm, Warp, iTerm2, and
+Terminal, both Option keys pass through for terminal Meta input. Press
+`Fn+Escape` to toggle Native Input mode when an application needs every global
+shortcut disabled; SketchyBar displays `Native Input` until it is toggled off.
+See [SHORTCUTS.md](SHORTCUTS.md) for the complete map.
+
 The exact AeroSpace window/workspace layout is saved automatically every 15
 minutes and once more on a best-effort basis when macOS logs out or shuts down.
 You can also save it manually after arranging windows the way you want them to
@@ -76,10 +83,9 @@ manually:
 ```
 
 1Password windows are floated so authentication dialogs stay usable on the
-current workspace. For window discovery, use
-`⌥+Up` for a readable all-window picker, `⌥+Shift+Up` for Mission Control /
-expose, `⌥+Ctrl+Tab` for the next window across all workspaces, and
-`⌥+Ctrl+Shift+Tab` for the previous window.
+current workspace. Use `Left ⌥+K` for the shortcut reference,
+`Left ⌥+Command+Up` for Mission Control, `Control+Tab` to cycle windows on the
+focused workspace, and `Command+Control+Tab` to cycle monitor focus.
 
 Workspace shortcuts are monitor-scoped. The built-in display uses slot `0`, and
 attached external displays use slots `1`, `2`, and `3` in AeroSpace monitor

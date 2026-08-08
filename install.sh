@@ -51,6 +51,7 @@ WINDOW_PICKER_SRC="$AEROSPACE_DIR/window_picker.swift"
 WINDOW_PICKER_BIN="$AEROSPACE_DIR/window_picker"
 SECURE_INPUT_HELPER="$AEROSPACE_DIR/secure_input_report.sh"
 ACCESSIBILITY_REPORT_HELPER="$AEROSPACE_DIR/accessibility_report.sh"
+NATIVE_INPUT_HELPER="$AEROSPACE_DIR/native_input_mode.sh"
 
 CHROME_REHOME_SRC="$SKETCHY_DIR/plugins/chrome_rehome.swift"
 CHROME_REHOME_LABEL="com.omarchy-macos.chrome_rehome"
@@ -119,6 +120,7 @@ cmd_install() {
   write_window_state_helper
   write_window_state_saver_agent
   write_goto_space_helper
+  write_native_input_helper
   write_window_cycle_helper
   write_window_picker_helper
   write_secure_input_helper
@@ -142,17 +144,17 @@ cmd_install() {
   echo ""
   success "Installation complete!"
   echo ""
-  echo -e "  ${BOLD}Modifier key:${RESET} Option (⌥)  ← your new SUPER key"
+  echo -e "  ${BOLD}Modifier key:${RESET} Left Option (⌥) = SUPER; Right Option stays native"
   echo ""
   echo -e "  ${BOLD}Essential shortcuts:${RESET}"
-  echo "  ⌥ + 1-9          switch workspace"
-  echo "  ⌥ + h/j/k/l      focus window (vim-style)"
-  echo "  ⌥ + shift + h/j/k/l  move window"
-  echo "  ⌥ + return        open terminal (Ghostty → WezTerm → Terminal)"
-  echo "  ⌥ + space         Raycast launcher"
-  echo "  ⌥ + f             fullscreen toggle"
-  echo "  ⌥ + shift + q     close focused window"
-  echo "  ⌥ + shift + r     reload aerospace config"
+  echo "  Left ⌥ + 1-0          switch workspace"
+  echo "  Left ⌥ + arrows       focus window"
+  echo "  Left ⌥ + shift + arrows  swap window"
+  echo "  Left ⌥ + return       open terminal (Ghostty → WezTerm → Terminal)"
+  echo "  Left ⌥ + space        Raycast launcher"
+  echo "  Left ⌥ + f            fullscreen toggle"
+  echo "  Left ⌥ + w            close focused window"
+  echo "  Fn + Escape           toggle Native Input passthrough"
   echo ""
   echo -e "  ${BOLD}Edit configs:${RESET}"
   echo "  $AEROSPACE_CFG"
@@ -177,6 +179,7 @@ cmd_refresh() {
   write_window_state_helper
   write_window_state_saver_agent
   write_goto_space_helper
+  write_native_input_helper
   write_window_cycle_helper
   write_window_picker_helper
   write_secure_input_helper
@@ -311,49 +314,52 @@ let fontKey = NSFont.monospacedSystemFont(ofSize: 15, weight: .bold)
 
 let sections = [
     Section(title: "Workspaces", color: mauve, rows: [
-        Row(key: "⌥ 1-9", action: "Switch workspace"),
-        Row(key: "⌥ ⇧ 1-9", action: "Move window"),
-        Row(key: "⌥ Tab", action: "Last workspace"),
-        Row(key: "⌥ ⇧ Tab", action: "Workspace -> monitor"),
-        Row(key: "⌥ ⌃ Tab", action: "Next window"),
-        Row(key: "⌥ ⌃ ⇧ Tab", action: "Previous window"),
+        Row(key: "L⌥ 1-0", action: "Switch workspace"),
+        Row(key: "L⌥ ⇧ 1-0", action: "Move and follow"),
+        Row(key: "L⌥ ⇧ ⌃ 1-0", action: "Move without follow"),
+        Row(key: "L⌥ Tab", action: "Next workspace"),
+        Row(key: "L⌥ ⇧ Tab", action: "Previous workspace"),
+        Row(key: "L⌥ ⌘ Tab", action: "Former workspace"),
     ]),
     Section(title: "Focus", color: blue, rows: [
-        Row(key: "⌥ H J K L", action: "Focus direction"),
-        Row(key: "⌥ ↑", action: "Window picker"),
-        Row(key: "⌥ ⇧ ↑", action: "Mission Control"),
+        Row(key: "L⌥ Arrows", action: "Focus direction"),
+        Row(key: "⌃ Tab", action: "Next local window"),
+        Row(key: "⌃ ⇧ Tab", action: "Previous local window"),
+        Row(key: "⌘ ⌃ Tab", action: "Next monitor"),
     ]),
     Section(title: "Move", color: green, rows: [
-        Row(key: "⌥ ⇧ H J K L", action: "Move window"),
-        Row(key: "⌥ ⌃ ⇧ H / L", action: "Move monitor"),
+        Row(key: "L⌥ ⇧ Arrows", action: "Swap window"),
+        Row(key: "L⌥ ⇧ ⌃ Arrows", action: "Move monitor"),
     ]),
     Section(title: "Resize", color: peach, rows: [
-        Row(key: "⌥ ⌃ H / L", action: "Shrink / grow width"),
-        Row(key: "⌥ ⌃ K / J", action: "Shrink / grow height"),
+        Row(key: "L⌥ - / =", action: "Width down / up"),
+        Row(key: "L⌥ ⇧ - / =", action: "Height down / up"),
     ]),
     Section(title: "Layout", color: pink, rows: [
-        Row(key: "⌥ F", action: "Fullscreen"),
-        Row(key: "⌥ E", action: "Toggle split direction"),
-        Row(key: "⌥ S", action: "Accordion (stacked)"),
+        Row(key: "L⌥ K", action: "Shortcut reference"),
+        Row(key: "L⌥ J", action: "Toggle split direction"),
+        Row(key: "L⌥ L", action: "Tiles / accordion"),
+        Row(key: "L⌥ T", action: "Float / tile toggle"),
+        Row(key: "L⌥ F", action: "Fullscreen"),
+        Row(key: "L⌥ W", action: "Close window"),
         Row(key: "auto", action: "Accordion when narrow"),
-        Row(key: "⌥ ⇧ Space", action: "Float / tile toggle"),
-        Row(key: "⌥ ⇧ Q", action: "Close window"),
     ]),
     Section(title: "Apps", color: yellow, rows: [
-        Row(key: "⌥ Return", action: "Terminal"),
-        Row(key: "⌥ ⇧ B", action: "Browser"),
-        Row(key: "⌥ ⇧ N", action: "Editor"),
-        Row(key: "⌥ ⇧ F", action: "Finder"),
-        Row(key: "⌥ ⇧ M", action: "Music"),
-        Row(key: "⌥ ⇧ G", action: "Chat"),
-        Row(key: "⌥ ⇧ /", action: "Passwords"),
+        Row(key: "L⌥ Return", action: "Terminal"),
+        Row(key: "L⌥ ⇧ Return", action: "Browser"),
+        Row(key: "L⌥ ⇧ N", action: "Editor"),
+        Row(key: "L⌥ ⇧ F", action: "Finder"),
+        Row(key: "L⌥ ⇧ M", action: "Music"),
+        Row(key: "L⌥ ⇧ G", action: "Chat"),
+        Row(key: "L⌥ ⇧ /", action: "Passwords"),
     ]),
     Section(title: "Misc", color: teal, rows: [
-        Row(key: "⌥ ⇧ S", action: "Screenshot (region)"),
-        Row(key: "⌥ P", action: "Screenshot (full)"),
-        Row(key: "⌥ ⇧ R", action: "Reload Aerospace"),
-        Row(key: "⌥ ⇧ C", action: "Reload skhd"),
-        Row(key: "⌥ Space", action: "Raycast launcher"),
+        Row(key: "Fn Esc", action: "Toggle Native Input"),
+        Row(key: "R⌥ Arrows", action: "Native text movement"),
+        Row(key: "L⌥ ⇧ S", action: "Screenshot (region)"),
+        Row(key: "L⌥ ⌘ ↑", action: "Mission Control"),
+        Row(key: "L⌥ Z", action: "Toggle bar"),
+        Row(key: "L⌥ Space", action: "Raycast launcher"),
     ]),
 ]
 
@@ -406,7 +412,7 @@ let title = "omarchy-macos shortcuts"
 let titleSize = textSize(title, font: fontTitle)
 drawText(title, x: (imageWidth - titleSize.width) / 2, y: padding - 5, font: fontTitle, color: lavender)
 
-let subtitle = "modifier: ⌥ Option"
+let subtitle = "Omarchy: left ⌥  •  native macOS: right ⌥  •  bypass: Fn Esc"
 let subtitleSize = textSize(subtitle, font: fontSm)
 drawText(subtitle, x: (imageWidth - subtitleSize.width) / 2, y: padding + 28, font: fontSm, color: subtext)
 
@@ -886,6 +892,7 @@ start_services() {
     CONFIG_DIR="$SKETCHY_DIR" sketchybar --reload >/dev/null 2>&1 || true
     "$SKETCHY_DIR/plugins/restore_status.sh" refresh >/dev/null 2>&1 || true
   fi
+  "$NATIVE_INPUT_HELPER" reset >/dev/null 2>&1 || true
 
   if borders_enabled; then
     info "Starting borders..."
@@ -1089,97 +1096,14 @@ outer.bottom     = 8
 outer.top        = 8    # SketchyBar floats on demand, no reserved space needed
 outer.right      = 8
 
-# ── Default layout ─────────────────────────────────────────────────────────
+# ── Hotkey modes ──────────────────────────────────────────────────────────
+# skhd owns all user-facing global bindings so left and right Option can be
+# distinguished and terminal apps can receive native Option/Meta input.
+# AeroSpace remains the command engine. Native Input mode is intentionally
+# empty and is selected by ~/.config/aerospace/native_input_mode.sh.
 [mode.main.binding]
 
-# ── Workspace switching: ⌥ + 0-9 ─────────────────────────────────────────
-# Per-monitor spaces: key N resolves to workspace "<monitor-slot>N".
-# The built-in display is slot 0 when present; external displays follow it.
-# See goto_space.sh.
-alt-1 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 1'
-alt-2 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 2'
-alt-3 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 3'
-alt-4 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 4'
-alt-5 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 5'
-alt-6 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 6'
-alt-7 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 7'
-alt-8 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 8'
-alt-9 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 9'
-alt-0 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 0'
-
-# ── Move window to workspace: ⌥ + Shift + 0-9 ────────────────────────────
-alt-shift-1 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 1 --move'
-alt-shift-2 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 2 --move'
-alt-shift-3 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 3 --move'
-alt-shift-4 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 4 --move'
-alt-shift-5 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 5 --move'
-alt-shift-6 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 6 --move'
-alt-shift-7 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 7 --move'
-alt-shift-8 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 8 --move'
-alt-shift-9 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 9 --move'
-alt-shift-0 = 'exec-and-forget ~/.config/aerospace/goto_space.sh 0 --move'
-
-# ── Focus: ⌥ + h/j/k/l ───────────────────────────────────────────────────
-# (mirrors Hyprland: SUPER + h/j/k/l)
-alt-h = 'focus left'
-alt-j = 'focus down'
-alt-k = 'focus up'
-alt-l = 'focus right'
-
-# ── Window overview: ⌥ + Up ──────────────────────────────────────────────
-alt-up = 'exec-and-forget ~/.config/aerospace/window_picker.sh'
-
-# ── SketchyBar visibility toggle: ⌥ + z ─────────────────────────────────
-alt-z = 'exec-and-forget ~/.config/sketchybar/plugins/toggle_bar.sh'
-
-# ── Move window: ⌥ + Shift + h/j/k/l ─────────────────────────────────────
-# (mirrors Hyprland: SUPER + SHIFT + h/j/k/l)
-alt-shift-h = 'move left'
-alt-shift-j = 'move down'
-alt-shift-k = 'move up'
-alt-shift-l = 'move right'
-
-# ── Resize: ⌥ + Ctrl + h/j/k/l ───────────────────────────────────────────
-# (mirrors Hyprland: SUPER + ALT + h/j/k/l)
-alt-ctrl-h = 'resize width -50'
-alt-ctrl-l = 'resize width +50'
-alt-ctrl-k = 'resize height -50'
-alt-ctrl-j = 'resize height +50'
-
-# ── Layout toggles ────────────────────────────────────────────────────────
-# ⌥ + e → toggle split direction (horizontal/vertical)
-alt-e = 'layout tiles horizontal vertical'
-
-# ⌥ + s → toggle accordion (stacked) layout
-alt-s = 'layout accordion horizontal vertical'
-
-# ⌥ + f → fullscreen toggle
-# (mirrors Hyprland: SUPER + F)
-alt-f = 'fullscreen'
-
-# ⌥ + shift + space → toggle float for focused window
-# (mirrors Hyprland: SUPER + V)
-alt-shift-space = 'layout floating tiling'
-
-# ── Window management ─────────────────────────────────────────────────────
-# ⌥ + shift + q → close focused window
-# (mirrors Hyprland: SUPER + Q)
-alt-shift-q = 'close'
-
-# ⌥ + shift + r → reload config
-alt-shift-r = 'reload-config'
-
-# ── Workspace cycle ───────────────────────────────────────────────────────
-# ⌥ + tab → next workspace
-# ⌥ + shift + tab → previous workspace
-alt-tab       = 'exec-and-forget ~/.config/aerospace/workspace_back_and_forth.sh'
-alt-shift-tab = 'move-workspace-to-monitor --wrap-around next'
-alt-ctrl-tab = 'exec-and-forget ~/.config/aerospace/window_cycle.sh next'
-alt-ctrl-shift-tab = 'exec-and-forget ~/.config/aerospace/window_cycle.sh prev'
-
-# ── Move to next/prev monitor ─────────────────────────────────────────────
-alt-ctrl-shift-h = 'exec-and-forget ~/.config/aerospace/move_node_to_monitor_and_save.sh left'
-alt-ctrl-shift-l = 'exec-and-forget ~/.config/aerospace/move_node_to_monitor_and_save.sh right'
+[mode.native_input.binding]
 
 # ── App → workspace assignments ───────────────────────────────────────────
 
@@ -3154,7 +3078,8 @@ write_goto_space_helper() {
 #
 # Usage:
 #   goto_space.sh <key>          # switch to workspace for current monitor + key
-#   goto_space.sh <key> --move   # move focused window to that workspace
+#   goto_space.sh <key> --move-follow # move focused window and follow it
+#   goto_space.sh <key> --move        # move focused window without following
 #
 # <key> is 0-9. Workspace names are `${display_slot}${key}` where display_slot
 # is the focused monitor's stable Omarchy slot.
@@ -3184,6 +3109,17 @@ omarchy_monitor_id_for_slot "$TARGET_SLOT" >/dev/null || {
 omarchy_repair_detached_monitor_workspaces || true
 
 case "$ACTION" in
+  --move-follow)
+    window_id=$(aerospace list-windows --focused --format '%{window-id}' 2>/dev/null | head -n 1 || true)
+    aerospace move-node-to-workspace "$TARGET"
+    omarchy_switch_workspace_on_slot_monitor "$TARGET"
+    if [[ "$window_id" =~ ^[0-9]+$ ]]; then
+      aerospace focus --window-id "$window_id" >/dev/null 2>&1 || true
+    fi
+    "$HOME/.config/aerospace/window_state_debounced_save.sh" "move-node-to-workspace-$TARGET" >/dev/null 2>&1 || true
+    "$HOME/.config/aerospace/responsive_layout.sh" "move-node-to-workspace-$TARGET" >/dev/null 2>&1 || true
+    "$HOME/.config/sketchybar/plugins/hide_bar.sh" >/dev/null 2>&1 || true
+    ;;
   --move)
     aerospace move-node-to-workspace "$TARGET"
     "$HOME/.config/aerospace/window_state_debounced_save.sh" "move-node-to-workspace-$TARGET" >/dev/null 2>&1 || true
@@ -3208,7 +3144,108 @@ aerospace workspace-back-and-forth
 WORKSPACE_BACK_AND_FORTH_EOF
 
   chmod +x "$AEROSPACE_DIR/workspace_back_and_forth.sh"
+
+  cat > "$AEROSPACE_DIR/workspace_cycle.sh" << 'WORKSPACE_CYCLE_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+DIRECTION="${1:-next}"
+case "$DIRECTION" in next|prev) ;; *) exit 2 ;; esac
+
+source "$HOME/.config/aerospace/omarchy_space_state.sh"
+current=$(aerospace list-workspaces --monitor focused --visible --format '%{workspace}' 2>/dev/null | head -n 1)
+[[ "$current" =~ ^[0-9][0-9]$ ]] || exit 0
+slot="${current:0:1}"
+key="${current:1:1}"
+order=(1 2 3 4 5 6 7 8 9 0)
+index=-1
+for idx in "${!order[@]}"; do
+  if [ "${order[$idx]}" = "$key" ]; then index="$idx"; break; fi
+done
+[ "$index" -ge 0 ] || exit 0
+if [ "$DIRECTION" = "next" ]; then
+  index=$(((index + 1) % 10))
+else
+  index=$(((index + 9) % 10))
+fi
+target="${slot}${order[$index]}"
+omarchy_switch_workspace_on_slot_monitor "$target"
+"$HOME/.config/aerospace/responsive_layout.sh" "workspace-cycle-$DIRECTION-$target" >/dev/null 2>&1 || true
+"$HOME/.config/sketchybar/plugins/hide_bar.sh" >/dev/null 2>&1 || true
+WORKSPACE_CYCLE_EOF
+
+  chmod +x "$AEROSPACE_DIR/workspace_cycle.sh"
   success "goto_space helper written to $AEROSPACE_DIR/goto_space.sh"
+}
+
+# =============================================================================
+# NATIVE INPUT MODE
+# Fn+Escape toggles this through skhd. It disables AeroSpace bindings as a
+# second line of defence and makes the otherwise hidden bar show mode state.
+# =============================================================================
+write_native_input_helper() {
+  info "Writing Native Input helper..."
+  mkdir -p "$AEROSPACE_DIR"
+
+  cat > "$NATIVE_INPUT_HELPER" << 'NATIVE_INPUT_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+ACTION="${1:-toggle}"
+TMP_ROOT="${TMPDIR:-/tmp}"
+STATE_FILE="$TMP_ROOT/omarchy_native_input_active"
+PREVIOUS_BAR_FILE="$TMP_ROOT/omarchy_native_input_previous_bar"
+BAR_STATE_FILE="${XDG_RUNTIME_DIR:-/tmp}/omarchy_sketchybar_visible"
+RESTORE_GUARD="${OMARCHY_WINDOW_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_restore_active}"
+STARTUP_RESTORE_GUARD="${OMARCHY_WINDOW_STARTUP_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_startup_restore_active}"
+PARTIAL_RESTORE_GUARD="${OMARCHY_WINDOW_PARTIAL_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_restore_incomplete}"
+
+show_native_input() {
+  if [ ! -f "$STATE_FILE" ]; then
+    previous=$(cat "$BAR_STATE_FILE" 2>/dev/null || printf '0')
+    case "$previous" in 0|1) ;; *) previous=0 ;; esac
+    printf '%s\n' "$previous" > "$PREVIOUS_BAR_FILE"
+  fi
+  : > "$STATE_FILE"
+  aerospace mode native_input >/dev/null 2>&1 || true
+  if command -v sketchybar >/dev/null 2>&1; then
+    sketchybar --bar hidden=off topmost=window >/dev/null 2>&1 || true
+    sketchybar --set native_input drawing=on label="Native Input" >/dev/null 2>&1 || true
+  fi
+  printf '1' > "$BAR_STATE_FILE"
+}
+
+hide_native_input() {
+  was_active=0
+  [ -e "$STATE_FILE" ] && was_active=1
+  aerospace mode main >/dev/null 2>&1 || true
+  rm -f "$STATE_FILE"
+  if command -v sketchybar >/dev/null 2>&1; then
+    sketchybar --set native_input drawing=off label="" >/dev/null 2>&1 || true
+  fi
+  previous=$(cat "$PREVIOUS_BAR_FILE" 2>/dev/null || printf '0')
+  rm -f "$PREVIOUS_BAR_FILE"
+  if [ "$was_active" = "1" ] &&
+     [ "$previous" = "0" ] &&
+     [ ! -e "$RESTORE_GUARD" ] &&
+     [ ! -e "$STARTUP_RESTORE_GUARD" ] &&
+     [ ! -e "$PARTIAL_RESTORE_GUARD" ]; then
+    "$HOME/.config/sketchybar/plugins/hide_bar.sh" >/dev/null 2>&1 || true
+  fi
+}
+
+case "$ACTION" in
+  on) show_native_input ;;
+  off|reset) hide_native_input ;;
+  toggle)
+    if [ -e "$STATE_FILE" ]; then hide_native_input; else show_native_input; fi
+    ;;
+  *) echo "native_input_mode.sh: usage: on|off|reset|toggle" >&2; exit 2 ;;
+esac
+NATIVE_INPUT_EOF
+
+  chmod +x "$NATIVE_INPUT_HELPER"
+  success "Native Input helper written to $NATIVE_INPUT_HELPER"
 }
 
 # =============================================================================
@@ -3925,63 +3962,92 @@ write_skhd_config() {
   cat > "$SKHD_CFG" << 'SKHD_EOF'
 # =============================================================================
 # skhd — global hotkey daemon
-# Handles app-launching shortcuts that Aerospace doesn't cover
-# (mirrors Hyprland: SUPER + SHIFT + <key> app launchers)
+# Left Option is Omarchy SUPER. Right Option remains native macOS input.
+# Terminal process maps pass all configured chords through for Option/Meta use.
 # =============================================================================
 
-# ── Terminal: ⌥ + Return ──────────────────────────────────────────────────
-# Tries Ghostty → WezTerm → Terminal.app in order
-alt - return : \
-  if open -a "Ghostty" 2>/dev/null; then :; \
-  elif open -a "WezTerm" 2>/dev/null; then :; \
-  else open -a "Terminal"; fi
-
-# ── App launchers: ⌥ + Shift + <key> ─────────────────────────────────────
-# (mirrors Hyprland: SUPER + SHIFT + B/N/M/G etc.)
-
-# Browser (default system browser)
-alt + shift - b : open -a "Safari" 2>/dev/null || open -a "Google Chrome" 2>/dev/null || open -a "Firefox"
-
-# File manager
-alt + shift - f : open ~
-
-# Editor (Cursor → VS Code → TextEdit)
-alt + shift - n : \
-  open -a "Cursor" 2>/dev/null || \
-  open -a "Visual Studio Code" 2>/dev/null || \
-  open -a "TextEdit"
-
-# Music (Spotify → Music.app)
-alt + shift - m : open -a "Spotify" 2>/dev/null || open -a "Music"
-
-# Passwords (1Password → Keychain Access)
-alt + shift - 0x2C : open -a "1Password" 2>/dev/null || open -a "Keychain Access"
-
-# Communications (Slack → Messages)
-alt + shift - g : open -a "Slack" 2>/dev/null || open -a "Messages"
-
-# ── Launcher: ⌥ + Space → Raycast ────────────────────────────────────────
-# (mirrors Hyprland: SUPER + ALT + SPACE → walker)
-# Note: Raycast is configured separately. Set its activation key to ⌥+Space
-# in Raycast Settings → General → Raycast Hotkey
-# Uncomment below if you prefer skhd to trigger it directly:
-# alt - space : open -a "Raycast"
-
-# ── Screenshot shortcuts ──────────────────────────────────────────────────
-# Region screenshot → clipboard (mirrors SUPER + SHIFT + S)
-alt + shift - s : screencapture -ic
-
-# Full screenshot → clipboard
-alt - p : screencapture -c
-
-# ── Window overview ───────────────────────────────────────────────────────
-# Native Mission Control is still available, but the normal all-window picker
-# is bound in AeroSpace as ⌥+Up so it follows the same input path as ⌥+h/j/k/l.
-alt + shift - up : open -a "Mission Control"
-
-# ── Reload skhd config ────────────────────────────────────────────────────
-alt + shift - c : skhd --reload
+# Fn+Escape is deliberately available even in terminal apps.
+:: default : ~/.config/aerospace/native_input_mode.sh off
+:: native_input : ~/.config/aerospace/native_input_mode.sh on
+fn - escape ; native_input
+native_input < fn - escape ; default
 SKHD_EOF
+
+  # Every normal-mode binding uses the same terminal pass-through policy.
+  # Repeating the process map in generated skhd syntax keeps Fn+Escape active
+  # in terminals, unlike skhd's all-or-nothing application blacklist.
+  write_binding() {
+    local chord="$1"
+    local command="$2"
+    {
+      printf '%s [\n' "$chord"
+      printf '  "Ghostty" ~\n'
+      printf '  "WezTerm" ~\n'
+      printf '  "Warp" ~\n'
+      printf '  "iTerm2" ~\n'
+      printf '  "Terminal" ~\n'
+      printf '  * : %s\n' "$command"
+      printf ']\n\n'
+    } >> "$SKHD_CFG"
+  }
+
+  # Discovery, launcher, and canonical window actions.
+  write_binding 'lalt - k' 'open "$HOME/Applications/Omarchy Shortcuts Widget.app"'
+  write_binding 'lalt - space' 'open -a "Raycast"'
+  write_binding 'lalt - w' 'aerospace close'
+  write_binding 'lalt - t' 'aerospace layout floating tiling'
+  write_binding 'lalt - j' 'aerospace layout tiles horizontal vertical'
+  write_binding 'lalt - l' 'aerospace layout accordion horizontal vertical'
+  write_binding 'lalt - f' 'aerospace fullscreen'
+
+  local key
+  for key in 1 2 3 4 5 6 7 8 9 0; do
+    write_binding "lalt - $key" "$HOME/.config/aerospace/goto_space.sh $key"
+    write_binding "lalt + shift - $key" "$HOME/.config/aerospace/goto_space.sh $key --move-follow"
+    write_binding "lalt + shift + ctrl - $key" "$HOME/.config/aerospace/goto_space.sh $key --move"
+  done
+
+  write_binding 'lalt - tab' '$HOME/.config/aerospace/workspace_cycle.sh next'
+  write_binding 'lalt + shift - tab' '$HOME/.config/aerospace/workspace_cycle.sh prev'
+  write_binding 'lalt + cmd - tab' '$HOME/.config/aerospace/workspace_back_and_forth.sh'
+
+  write_binding 'lalt - left' 'aerospace focus left'
+  write_binding 'lalt - down' 'aerospace focus down'
+  write_binding 'lalt - up' 'aerospace focus up'
+  write_binding 'lalt - right' 'aerospace focus right'
+  write_binding 'lalt + shift - left' 'aerospace swap left'
+  write_binding 'lalt + shift - down' 'aerospace swap down'
+  write_binding 'lalt + shift - up' 'aerospace swap up'
+  write_binding 'lalt + shift - right' 'aerospace swap right'
+
+  write_binding 'lalt - equal' 'aerospace resize width +50'
+  write_binding 'lalt - minus' 'aerospace resize width -50'
+  write_binding 'lalt + shift - equal' 'aerospace resize height +50'
+  write_binding 'lalt + shift - minus' 'aerospace resize height -50'
+
+  write_binding 'lalt + shift + ctrl - left' '$HOME/.config/aerospace/move_node_to_monitor_and_save.sh left'
+  write_binding 'lalt + shift + ctrl - down' '$HOME/.config/aerospace/move_node_to_monitor_and_save.sh down'
+  write_binding 'lalt + shift + ctrl - up' '$HOME/.config/aerospace/move_node_to_monitor_and_save.sh up'
+  write_binding 'lalt + shift + ctrl - right' '$HOME/.config/aerospace/move_node_to_monitor_and_save.sh right'
+
+  write_binding 'ctrl - tab' 'aerospace focus --boundaries workspace --boundaries-action wrap-around-the-workspace dfs-next'
+  write_binding 'ctrl + shift - tab' 'aerospace focus --boundaries workspace --boundaries-action wrap-around-the-workspace dfs-prev'
+  write_binding 'cmd + ctrl - tab' 'aerospace focus-monitor --wrap-around next'
+  write_binding 'cmd + ctrl + shift - tab' 'aerospace focus-monitor --wrap-around prev'
+
+  # App launchers and retained macOS extensions.
+  write_binding 'lalt - return' 'open -a "Ghostty" 2>/dev/null || open -a "WezTerm" 2>/dev/null || open -a "Terminal"'
+  write_binding 'lalt + shift - return' 'open -a "Safari" 2>/dev/null || open -a "Google Chrome" 2>/dev/null || open -a "Firefox"'
+  write_binding 'lalt + shift - f' 'open ~'
+  write_binding 'lalt + shift - n' 'open -a "Zed" 2>/dev/null || open -a "Visual Studio Code" 2>/dev/null || open -a "TextEdit"'
+  write_binding 'lalt + shift - m' 'open -a "Spotify" 2>/dev/null || open -a "Music"'
+  write_binding 'lalt + shift - 0x2C' 'open -a "1Password" 2>/dev/null || open -a "Keychain Access"'
+  write_binding 'lalt + shift - g' 'open -a "Slack" 2>/dev/null || open -a "Messages"'
+  write_binding 'lalt + shift - s' 'screencapture -ic'
+  write_binding 'lalt + cmd - up' 'open -a "Mission Control"'
+  write_binding 'lalt - z' '$HOME/.config/sketchybar/plugins/toggle_bar.sh'
+  write_binding 'lalt + shift - r' 'aerospace reload-config'
+  write_binding 'lalt + shift - c' 'skhd --reload'
 
   success "skhd config written to $SKHD_CFG"
 }
@@ -4062,7 +4128,7 @@ sketchybar --default \
   background.border_width=0
 
 # ── Load items ────────────────────────────────────────────────────────────
-for item in space.1 space.2 space.3 space.4 space.5 space.6 space.7 space.8 space.9 space.0 spaces_separator front_app monitor display_reload restore_status accessibility_status; do
+for item in space.1 space.2 space.3 space.4 space.5 space.6 space.7 space.8 space.9 space.0 spaces_separator front_app monitor display_reload restore_status accessibility_status native_input; do
   sketchybar --remove "$item" >/dev/null 2>&1 || true
 done
 for slot in 0 1 2 3 4 5 6 7 8 9; do
@@ -4079,6 +4145,7 @@ source "$CONFIG_DIR/items/front_app.sh"
 source "$CONFIG_DIR/items/monitor.sh"
 source "$CONFIG_DIR/items/display_reload.sh"
 source "$CONFIG_DIR/items/restore_status.sh"
+source "$CONFIG_DIR/items/native_input.sh"
 
 # ── Finalise ──────────────────────────────────────────────────────────────
 sketchybar --update
@@ -4278,6 +4345,27 @@ while IFS= read -r monitor_id; do
   slot=$((slot + 1))
 done <<< "$monitors"
 RESTORE_STATUS_ITEM_EOF
+
+  cat > "$SKETCHY_DIR/items/native_input.sh" << 'NATIVE_INPUT_ITEM_EOF'
+#!/usr/bin/env bash
+source "$CONFIG_DIR/colors.sh"
+
+sketchybar --add item native_input center \
+  --set native_input \
+    drawing=off \
+    updates=off \
+    icon.drawing=off \
+    label.font="SF Pro:Semibold:13.0" \
+    label.color=$YELLOW \
+    background.drawing=on \
+    background.color=$ITEM_BG \
+    background.border_color=$YELLOW \
+    background.border_width=1 \
+    background.corner_radius=6 \
+    background.height=24 \
+    padding_left=8 \
+    padding_right=8
+NATIVE_INPUT_ITEM_EOF
 
   # ── Right-side items: wifi, battery, clock ─────────────────────────────
   cat > "$SKETCHY_DIR/items/wifi.sh" << 'WIFI_ITEM_EOF'
