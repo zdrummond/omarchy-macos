@@ -64,6 +64,7 @@ SHORTCUT_WIDGET_LABEL="com.omarchy-macos.shortcut_widget"
 SHORTCUT_WIDGET_APP="$HOME/Applications/Omarchy Shortcuts Widget.app"
 SHORTCUT_WIDGET_BIN="$SHORTCUT_WIDGET_APP/Contents/MacOS/shortcut_widget"
 SHORTCUT_WIDGET_PLIST="$HOME/Library/LaunchAgents/$SHORTCUT_WIDGET_LABEL.plist"
+SHORTCUT_WIDGET_PID_FILE="/tmp/omarchy_shortcut_widget.pid"
 
 WINDOW_STATE_FILE="$AEROSPACE_DIR/omarchy_window_state.json"
 WINDOW_STATE_HELPER="$AEROSPACE_DIR/window_state.pl"
@@ -204,9 +205,9 @@ cmd_refresh() {
 # =============================================================================
 cmd_shortcuts_widget() {
   header "omarchy-macos shortcut widget"
+  stop_shortcut_widget
   write_shortcut_desktop_widget
   if [[ -f "$SHORTCUT_WIDGET_PLIST" ]]; then
-    launchctl unload "$SHORTCUT_WIDGET_PLIST" 2>/dev/null || true
     launchctl load "$SHORTCUT_WIDGET_PLIST" 2>/dev/null || \
       warn "Could not load shortcut desktop widget LaunchAgent"
   fi
@@ -475,12 +476,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var imageView: NSImageView?
     var lastModified: Date?
 
+    func applicationWillTerminate(_ notification: Notification) {
+        let pidPath = "/tmp/omarchy_shortcut_widget.pid"
+        let current = try? String(contentsOfFile: pidPath, encoding: .utf8)
+        if current?.trimmingCharacters(in: .whitespacesAndNewlines) == String(ProcessInfo.processInfo.processIdentifier) {
+            try? FileManager.default.removeItem(atPath: pidPath)
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        fputs("shortcut widget: application finished launching\n", stderr)
         render()
         Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             self?.renderIfChanged()
         }
+    }
+
+    func applicationDidChangeScreenParameters(_ notification: Notification) {
+        fputs("shortcut widget: screen parameters changed\n", stderr)
+        render()
     }
 
     func renderIfChanged() {
@@ -492,8 +506,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func render() {
-        guard let image = NSImage(contentsOfFile: imagePath),
-              let screen = NSScreen.main ?? NSScreen.screens.first else {
+        guard let image = NSImage(contentsOfFile: imagePath) else {
+            fputs("shortcut widget: cannot load image at \(imagePath)\n", stderr)
+            window?.orderOut(nil)
+            return
+        }
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else {
+            fputs("shortcut widget: no screen available\n", stderr)
             window?.orderOut(nil)
             return
         }
@@ -516,8 +535,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             win.backgroundColor = .clear
             win.hasShadow = false
             win.ignoresMouseEvents = true
-            win.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-            win.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
+            win.isReleasedWhenClosed = false
+            win.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+            // The legacy desktopIconWindow level resolves below the visible
+            // wallpaper stack on macOS 26. One level below normal windows keeps
+            // this click-through widget visible on the desktop while ordinary
+            // application windows remain above it.
+            win.level = NSWindow.Level(rawValue: NSWindow.Level.normal.rawValue - 1)
 
             let view = NSImageView(frame: NSRect(origin: .zero, size: size))
             view.imageScaling = .scaleProportionallyUpOrDown
@@ -533,10 +557,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         window?.orderFrontRegardless()
+        fputs("shortcut widget: ordered window frame=\(NSStringFromRect(frame)) level=\(window?.level.rawValue ?? -1)\n", stderr)
     }
 }
 
 let app = NSApplication.shared
+let policySet = app.setActivationPolicy(.accessory)
+fputs("shortcut widget: accessory activation policy=\(policySet)\n", stderr)
+try? String(ProcessInfo.processInfo.processIdentifier).write(
+    toFile: "/tmp/omarchy_shortcut_widget.pid",
+    atomically: true,
+    encoding: .utf8
+)
 let delegate = AppDelegate()
 app.delegate = delegate
 app.run()
@@ -585,7 +617,16 @@ SHORTCUT_WIDGET_INFO_PLIST_EOF
   <string>$SHORTCUT_WIDGET_LABEL</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$SHORTCUT_WIDGET_BIN</string>
+    <string>/usr/bin/open</string>
+    <string>-W</string>
+    <string>-n</string>
+    <string>-g</string>
+    <string>-o</string>
+    <string>/tmp/omarchy_shortcut_widget.log</string>
+    <string>--stderr</string>
+    <string>/tmp/omarchy_shortcut_widget.log</string>
+    <string>-a</string>
+    <string>$SHORTCUT_WIDGET_APP</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -757,6 +798,27 @@ disable_bar_toggle_daemons() {
   done
 }
 
+stop_shortcut_widget() {
+  launchctl unload "$SHORTCUT_WIDGET_PLIST" 2>/dev/null || true
+
+  local pid=""
+  if [[ -f "$SHORTCUT_WIDGET_PID_FILE" ]]; then
+    pid=$(cat "$SHORTCUT_WIDGET_PID_FILE" 2>/dev/null || true)
+  fi
+  if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+    local command_name
+    command_name=$(ps -p "$pid" -o comm= 2>/dev/null | awk -F/ '{print $NF}')
+    if [[ "$command_name" == "shortcut_widget" ]]; then
+      kill "$pid" 2>/dev/null || true
+      for _ in {1..20}; do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.05
+      done
+    fi
+  fi
+  rm -f "$SHORTCUT_WIDGET_PID_FILE"
+}
+
 # =============================================================================
 # BACKUP / RESTORE
 # =============================================================================
@@ -916,7 +978,7 @@ start_services() {
   fi
 
   info "Starting shortcut desktop widget..."
-  launchctl unload "$SHORTCUT_WIDGET_PLIST" 2>/dev/null || true
+  stop_shortcut_widget
   launchctl load "$SHORTCUT_WIDGET_PLIST" 2>/dev/null || \
     warn "Could not load shortcut desktop widget LaunchAgent"
 
@@ -936,7 +998,8 @@ stop_services() {
     launchctl unload "$CHROME_REHOME_PLIST" 2>/dev/null && info "  stopped chrome_rehome" || true
   fi
   if [[ -f "$SHORTCUT_WIDGET_PLIST" ]]; then
-    launchctl unload "$SHORTCUT_WIDGET_PLIST" 2>/dev/null && info "  stopped shortcut widget" || true
+    stop_shortcut_widget
+    info "  stopped shortcut widget"
   fi
   if borders_enabled || [[ "$mode" == "revert" ]]; then
     stop_brew_service borders
