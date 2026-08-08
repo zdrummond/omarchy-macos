@@ -4082,10 +4082,11 @@ SKHD_EOF
   write_binding 'lalt + shift - up' 'aerospace swap up'
   write_binding 'lalt + shift - right' 'aerospace swap right'
 
-  write_binding 'lalt - equal' 'aerospace resize width +50'
-  write_binding 'lalt - minus' 'aerospace resize width -50'
-  write_binding 'lalt + shift - equal' 'aerospace resize height +50'
-  write_binding 'lalt + shift - minus' 'aerospace resize height -50'
+  # skhd 0.3.9 has no equal/minus literals; use ANSI keycodes.
+  write_binding 'lalt - 0x18' 'aerospace resize width +50'
+  write_binding 'lalt - 0x1B' 'aerospace resize width -50'
+  write_binding 'lalt + shift - 0x18' 'aerospace resize height +50'
+  write_binding 'lalt + shift - 0x1B' 'aerospace resize height -50'
 
   write_binding 'lalt + shift + ctrl - left' '$HOME/.config/aerospace/move_node_to_monitor_and_save.sh left'
   write_binding 'lalt + shift + ctrl - down' '$HOME/.config/aerospace/move_node_to_monitor_and_save.sh down'

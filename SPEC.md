@@ -103,6 +103,8 @@ snapshot or login-time app launch cannot crowd the message workspace.
   Option-arrow movement and Option-Shift-arrow selection therefore remain
   available everywhere: through right Option in GUI apps and either Option in
   configured terminals. Standard Command-Tab remains the macOS app switcher.
+  Equal and Minus resize bindings are emitted as ANSI keycodes because skhd
+  0.3.9 does not recognize those names as key literals.
 - **Native Input escape hatch.** `Fn+Escape` toggles a cross-daemon Native Input
   mode. While active, skhd claims only the exit chord and AeroSpace uses an
   empty binding mode, so all other shortcuts pass through to macOS and the
