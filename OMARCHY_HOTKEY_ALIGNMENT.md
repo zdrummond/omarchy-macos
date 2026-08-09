@@ -145,7 +145,7 @@ updated generated-config tests, `SHORTCUTS.md`, the desktop cheatsheet, and
 
 | Omarchy action | Canonical macOS chord | Plan |
 | --- | --- | --- |
-| Show main bindings | `⌥+K` | Open the generated shortcut reference/widget. |
+| Show main bindings | Not bound | AeroSpace has no shortcut-reference UI; use the always-visible desktop widget. |
 | Application launcher | `⌥+Space` | Keep Raycast; make installer validation/documentation explicit. |
 | Close window | `⌥+W` | Replace current `⌥+⇧+Q`; optionally keep the old chord as a temporary alias. |
 | Toggle tile/float | `⌥+T` | Replace current `⌥+⇧+Space`. |

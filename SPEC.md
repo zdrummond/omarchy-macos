@@ -211,9 +211,10 @@ snapshot or login-time app launch cannot crowd the message workspace.
   Restarting the window-state saver during `refresh` is not a login/startup
   restore: the refresh path suppresses that restart's one-shot pending startup
   guard, so it must not show `Restoring windows` or block automatic saves.
-- **Window discovery** includes `Left ⌥+K` for the shortcut reference,
-  `Left ⌥+Command+Up` for Mission Control / expose, plus `Ctrl+Tab` and
-  `Ctrl+Shift+Tab` to cycle windows on the focused workspace.
+- **Window discovery** includes `Left ⌥+Command+Up` for Mission Control /
+  expose, plus `Ctrl+Tab` and `Ctrl+Shift+Tab` to cycle windows on the focused
+  workspace. The shortcut reference is an always-visible desktop widget;
+  AeroSpace has no built-in shortcut-reference command, so it has no hotkey.
 - **Launch rehome protects named spaces.** A named workspace is any workspace
   with an explicit category assignment/alias such as Mail, Msg, Music, Terms,
   Editors, or Agents. Space key `0` is unnamed and is reserved as the fallback

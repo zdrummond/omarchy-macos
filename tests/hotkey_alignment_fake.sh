@@ -22,7 +22,6 @@ SKHD_GENERATED="$HOME/.config/skhd/skhdrc"
 CONTROL_WORD_GENERATED="$HOME/.config/aerospace/control_word_navigation.swift"
 
 required_chords=(
-  'lalt - k'
   'lalt - space'
   'lalt - w'
   'lalt - t'
@@ -54,6 +53,11 @@ for chord in "${required_chords[@]}"; do
     exit 1
   }
 done
+
+if grep -Fq 'lalt - k : ' "$SKHD_GENERATED"; then
+  printf 'shortcut-reference chord should not be generated\n' >&2
+  exit 1
+fi
 
 for key in 1 2 3 4 5 6 7 8 9 0; do
   grep -Fq "lalt - $key : " "$SKHD_GENERATED"

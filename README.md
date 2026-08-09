@@ -96,7 +96,7 @@ manually:
 ```
 
 1Password windows are floated so authentication dialogs stay usable on the
-current workspace. Use `Left ⌥+K` for the shortcut reference,
+current workspace. The shortcut reference remains visible on the desktop; use
 `Left ⌥+Command+Up` for Mission Control, `Control+Tab` to cycle windows on the
 focused workspace, and `Command+Control+Tab` to cycle monitor focus.
 

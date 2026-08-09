@@ -60,7 +60,6 @@ both Option keys for native or Meta input.
 | --- | --- |
 | L⌥ + Equal / Minus | Grow / shrink width |
 | L⌥ + Shift + Equal / Minus | Grow / shrink height |
-| L⌥ + K | Show shortcut reference |
 | L⌥ + J | Toggle split direction |
 | L⌥ + L | Toggle tiles/accordion layout |
 | L⌥ + T | Toggle floating/tiling |

@@ -349,7 +349,6 @@ let sections = [
         Row(key: "⌥ ⇧ - / =", action: "Height down / up"),
     ]),
     Section(title: "Layout", color: pink, rows: [
-        Row(key: "⌥ K", action: "Shortcut reference"),
         Row(key: "⌥ J", action: "Toggle split direction"),
         Row(key: "⌥ L", action: "Tiles / accordion"),
         Row(key: "⌥ T", action: "Float / tile toggle"),
@@ -4298,8 +4297,7 @@ SKHD_EOF
     printf '%s : %s\n' "$chord" "$command" >> "$SKHD_CFG"
   }
 
-  # Discovery, launcher, and canonical window actions.
-  write_binding 'lalt - k' 'open "$HOME/Applications/Omarchy Shortcuts Widget.app"'
+  # Launcher and canonical window actions.
   write_binding 'lalt - space' 'open -a "Raycast"'
   write_binding 'lalt - w' 'aerospace close'
   write_binding 'lalt - t' 'aerospace layout floating tiling'
