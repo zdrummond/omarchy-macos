@@ -47,6 +47,19 @@ including Option-arrow text navigation and terminal Meta input. Left Option
 remains Omarchy Super in terminals. Press `Fn+Escape` to toggle Native Input
 mode when an application needs both Option keys or every global shortcut
 disabled; SketchyBar displays `Native Input` until it is toggled off.
+Control-Left/Right moves by word and Control-Shift-Left/Right selects by word,
+matching Omarchy/Linux behavior. These replace macOS's Control-arrow native
+Space shortcuts; `revert` restores their prior enabled state.
+The remapper must pass a timed canary before it can be enabled persistently:
+
+```sh
+./omarchy.sh control-word-navigation canary 60
+./omarchy.sh control-word-navigation enable
+```
+
+Disable it immediately with `./omarchy.sh control-word-navigation disable`.
+The helper rewrites events in place, exits if macOS disables its event tap, and
+is not automatically restarted after a fault.
 See [SHORTCUTS.md](SHORTCUTS.md) for the complete map.
 
 The exact AeroSpace window/workspace layout is saved automatically every 15

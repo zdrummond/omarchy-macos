@@ -16,8 +16,10 @@ sed '/^# USAGE \/ ENTRY POINT/,$d' "$ROOT/install.sh" > "$TEST_ROOT/install_lib.
 source "$TEST_ROOT/install_lib.sh" || exit 1
 write_skhd_config >/dev/null
 write_native_input_helper >/dev/null
+write_control_word_navigation >/dev/null
 
 SKHD_GENERATED="$HOME/.config/skhd/skhdrc"
+CONTROL_WORD_GENERATED="$HOME/.config/aerospace/control_word_navigation.swift"
 
 required_chords=(
   'lalt - k'
@@ -63,7 +65,6 @@ grep -Fqx 'fn - escape ; native_input' "$SKHD_GENERATED"
 grep -Fqx 'native_input < fn - escape ; default' "$SKHD_GENERATED"
 grep -Fqx ':: default : ~/.config/aerospace/native_input_mode.sh off' "$SKHD_GENERATED"
 grep -Fqx ':: native_input : ~/.config/aerospace/native_input_mode.sh on' "$SKHD_GENERATED"
-
 if grep -Eq '^(alt|ralt)([ +]| -)' "$SKHD_GENERATED"; then
   printf 'only left Option may own Omarchy bindings\n' >&2
   exit 1
@@ -93,6 +94,20 @@ cat > "$FAKE_BIN/sketchybar" <<'EOF'
 #!/usr/bin/env bash
 printf 'sketchybar:%s\n' "$*" >> "$OMARCHY_TEST_CALLS"
 EOF
+cat > "$FAKE_BIN/defaults" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = "import" ] && [ "${2:-}" = "com.apple.symbolichotkeys" ]; then
+  cp "$3" "$OMARCHY_TEST_SYMBOLIC_PLIST"
+  exit 0
+fi
+printf 'unexpected defaults call: %s\n' "$*" >&2
+exit 1
+EOF
+cat > "$FAKE_BIN/killall" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
 cat > "$HOME/.config/sketchybar/plugins/hide_bar.sh" <<'EOF'
 #!/usr/bin/env bash
 printf 'hide-bar\n' >> "$OMARCHY_TEST_CALLS"
@@ -101,6 +116,39 @@ EOF
 chmod +x "$FAKE_BIN"/* "$HOME/.config/sketchybar/plugins/hide_bar.sh"
 export PATH="$FAKE_BIN:$PATH"
 export OMARCHY_TEST_CALLS="$CALLS"
+
+# Control-arrow setup disables only the four native Space shortcuts and revert
+# restores their original enabled flags.
+mkdir -p "$(dirname "$SYMBOLIC_HOTKEYS_PLIST")" "$BACKUP_DIR"
+plutil -create xml1 "$SYMBOLIC_HOTKEYS_PLIST"
+/usr/libexec/PlistBuddy -c 'Add :AppleSymbolicHotKeys dict' "$SYMBOLIC_HOTKEYS_PLIST"
+for hotkey_id in 79 80 81 82; do
+  /usr/libexec/PlistBuddy -c "Add :AppleSymbolicHotKeys:$hotkey_id dict" "$SYMBOLIC_HOTKEYS_PLIST"
+  /usr/libexec/PlistBuddy -c "Add :AppleSymbolicHotKeys:$hotkey_id:enabled bool $([ "$hotkey_id" = 80 ] && printf false || printf true)" "$SYMBOLIC_HOTKEYS_PLIST"
+done
+export OMARCHY_TEST_SYMBOLIC_PLIST="$SYMBOLIC_HOTKEYS_PLIST"
+configure_control_word_navigation >/dev/null
+for hotkey_id in 79 80 81 82; do
+  [ "$(/usr/libexec/PlistBuddy -c "Print :AppleSymbolicHotKeys:$hotkey_id:enabled" "$SYMBOLIC_HOTKEYS_PLIST")" = false ]
+done
+restore_control_arrow_shortcuts >/dev/null
+for hotkey_id in 79 81 82; do
+  [ "$(/usr/libexec/PlistBuddy -c "Print :AppleSymbolicHotKeys:$hotkey_id:enabled" "$SYMBOLIC_HOTKEYS_PLIST")" = true ]
+done
+[ "$(/usr/libexec/PlistBuddy -c 'Print :AppleSymbolicHotKeys:80:enabled' "$SYMBOLIC_HOTKEYS_PLIST")" = false ]
+[ ! -e "$CONTROL_ARROW_BACKUP" ]
+
+grep -Fq 'place: .tailAppendEventTap' "$CONTROL_WORD_GENERATED"
+grep -Fq 'flags.remove(.maskControl)' "$CONTROL_WORD_GENERATED"
+grep -Fq 'flags.insert(.maskAlternate)' "$CONTROL_WORD_GENERATED"
+grep -Fq 'tapDisabledByTimeout' "$CONTROL_WORD_GENERATED"
+grep -Fq 'CFRunLoopStop(CFRunLoopGetMain())' "$CONTROL_WORD_GENERATED"
+! grep -Fq 'CGEvent.post' "$CONTROL_WORD_GENERATED"
+! grep -Fq 'skhd -k "ralt' "$SKHD_GENERATED"
+[ -x "$CONTROL_WORD_BIN" ]
+plutil -lint "$CONTROL_WORD_PLIST" >/dev/null
+! grep -Fq '<key>KeepAlive</key>' "$CONTROL_WORD_PLIST"
+grep -Fq '<string>/tmp/omarchy_window_state.log</string>' "$CONTROL_WORD_PLIST"
 
 # Resetting an already-normal session must not alter the user's bar visibility.
 printf '1' > "$XDG_RUNTIME_DIR/omarchy_sketchybar_visible"

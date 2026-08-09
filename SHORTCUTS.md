@@ -25,6 +25,19 @@ use slots `1`, `2`, and `3` when attached.
 
 Standard **Command + Tab** remains the macOS application switcher.
 
+## Text Navigation
+
+| Shortcut | Action |
+| --- | --- |
+| Control + Left / Right | Move to the previous / next word |
+| Control + Shift + Left / Right | Select to the previous / next word |
+| Right Option + Arrow | Native macOS text navigation fallback |
+
+The Control-arrow bindings replace macOS's native Mission Control shortcuts for
+moving between Spaces. Press Fn + Escape to temporarily pass Control-arrow
+through unchanged. The remapper is fail-open and is managed with
+`./omarchy.sh control-word-navigation canary|enable|disable|status`.
+
 ## Window Focus and Movement
 
 | Shortcut | Action |
@@ -38,8 +51,8 @@ Standard **Command + Tab** remains the macOS application switcher.
 | Command + Control + Shift + Tab | Focus previous monitor |
 
 Use **R⌥ + Arrow** and **R⌥ + Shift + Arrow** for native macOS word/paragraph
-movement and text selection. Both Option keys retain those behaviors in a
-configured terminal.
+movement and text selection. Press Fn + Escape when a terminal workflow needs
+both Option keys for native or Meta input.
 
 ## Resize, Layout, and Window Management
 

@@ -13,6 +13,16 @@ Bring the [Omarchy](https://omarchy.org/) / Hyprland Linux tiling workflow to ma
 - **Current Omarchy navigation where macOS permits it.** Left Option plus arrow
   keys controls window focus/movement; right Option plus arrow keys retains
   native macOS text navigation and selection.
+- **Omarchy text navigation.** Control-Left/Right moves by word and
+  Control-Shift-Left/Right selects by word in every app. A dedicated
+  tail-position event tap rewrites only those arrow events from Control to
+  Option in place, after skhd has observed the original chord; it never posts
+  or synthesizes a second key event. Native Input releases the chords unchanged.
+  The helper exits fail-open if macOS disables its event tap, and launchd does
+  not restart a failed process. Persistent enablement requires a successful
+  time-bounded canary. Install/refresh disables macOS's conflicting native Space
+  shortcuts (symbolic hotkeys 79–82) after saving their enabled flags; revert
+  restores only those four flags.
 - **Catppuccin Mocha color scheme.** Matches Omarchy's default theme (mauve accent for optional active window borders, base for the bar background).
 - **Zero visual clutter.** Disable macOS window animations, uniform 8px gaps, no Dock reliance.
 - **Single idempotent command wrapper.** `./omarchy.sh install` sets everything
@@ -112,6 +122,13 @@ snapshot or login-time app launch cannot crowd the message workspace.
   restores its previous visibility when the mode exits, except that active or
   incomplete restore warnings keep the bar visible. Login, install/refresh,
   and service restart reset the mode to normal.
+- **Input-remap rollout safety.** `./omarchy.sh control-word-navigation canary
+  [seconds]` runs the Control-arrow helper with a mandatory timeout and never
+  enables it persistently. `enable`, `disable`, and `status` manage the separate
+  no-KeepAlive LaunchAgent. A stopped, crashed, timed-out, or permission-denied
+  helper leaves ordinary keyboard input untouched.
+  Helper startup, canary, timeout, and fault messages use the shared daily
+  rotated window-state diagnostic log rather than an unbounded dedicated log.
 - **Focus changes do not warp the pointer.** Browser links and buttons must
   receive clicks at the user's chosen cursor position.
 - **Exact reboot restore** is snapshot-based. `./omarchy.sh save-window-state`

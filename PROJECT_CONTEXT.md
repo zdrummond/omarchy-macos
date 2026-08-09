@@ -34,6 +34,9 @@ not remembered bindings:
 - `install.sh` generates AeroSpace, skhd, SketchyBar, LaunchAgent, helper,
   widget, and optional border configuration. Edit the generator, never only a
   generated file in the home directory.
+- Control-arrow word navigation is a separate fail-open event-tap app generated
+  by `install.sh`; it rewrites events in place after skhd and must pass a timed
+  canary before its LaunchAgent is enabled.
 - AeroSpace owns tiling, focus, workspace placement, and most window bindings.
 - skhd owns global app launchers and macOS commands that AeroSpace does not.
 - SketchyBar owns the per-monitor workspace UI and status indicators.
@@ -49,6 +52,9 @@ not remembered bindings:
   Option remains native macOS input everywhere. Left Option remains Super in
   terminals; `Fn+Escape` temporarily releases it when both Option keys are
   needed for native or Meta input.
+- Control-Left/Right provides global word movement and the Shift variants
+  provide word selection. This intentionally replaces the corresponding
+  native macOS Space shortcuts, whose enabled flags must be restored by revert.
 - Workspaces are two digits: `<monitor-slot><key>`. Slot `0` is the built-in
   display; attached external displays use slots `1` through `3`.
 - Assigned apps belong in their canonical named workspace, but automatic

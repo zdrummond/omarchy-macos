@@ -52,6 +52,14 @@ WINDOW_PICKER_BIN="$AEROSPACE_DIR/window_picker"
 SECURE_INPUT_HELPER="$AEROSPACE_DIR/secure_input_report.sh"
 ACCESSIBILITY_REPORT_HELPER="$AEROSPACE_DIR/accessibility_report.sh"
 NATIVE_INPUT_HELPER="$AEROSPACE_DIR/native_input_mode.sh"
+SYMBOLIC_HOTKEYS_PLIST="$HOME/Library/Preferences/com.apple.symbolichotkeys.plist"
+CONTROL_ARROW_BACKUP="$BACKUP_DIR/control-arrow-symbolic-hotkeys.bak"
+CONTROL_WORD_LABEL="com.omarchy-macos.control_word_navigation"
+CONTROL_WORD_APP="$HOME/Applications/Omarchy Control Word Navigation.app"
+CONTROL_WORD_SRC="$AEROSPACE_DIR/control_word_navigation.swift"
+CONTROL_WORD_BIN="$CONTROL_WORD_APP/Contents/MacOS/control_word_navigation"
+CONTROL_WORD_PLIST="$HOME/Library/LaunchAgents/$CONTROL_WORD_LABEL.plist"
+CONTROL_WORD_ENABLED_MARKER="$BACKUP_DIR/.control-word-navigation-enabled"
 
 CHROME_REHOME_SRC="$SKETCHY_DIR/plugins/chrome_rehome.swift"
 CHROME_REHOME_LABEL="com.omarchy-macos.chrome_rehome"
@@ -122,6 +130,7 @@ cmd_install() {
   write_window_state_saver_agent
   write_goto_space_helper
   write_native_input_helper
+  write_control_word_navigation
   write_window_cycle_helper
   write_window_picker_helper
   write_secure_input_helper
@@ -135,6 +144,7 @@ cmd_install() {
   header "Tuning macOS for instant window movement..."
   defaults write NSGlobalDomain NSAutomaticWindowAnimationsEnabled -bool false
   defaults write NSGlobalDomain NSWindowResizeTime -float 0.001
+  configure_control_word_navigation
   success "macOS window animations disabled"
 
   header "Starting services..."
@@ -181,6 +191,7 @@ cmd_refresh() {
   write_window_state_saver_agent
   write_goto_space_helper
   write_native_input_helper
+  write_control_word_navigation
   write_window_cycle_helper
   write_window_picker_helper
   write_secure_input_helper
@@ -190,6 +201,7 @@ cmd_refresh() {
   write_sketchybar_config
   write_borders_config_if_enabled
   write_shortcut_desktop_widget
+  configure_control_word_navigation
 
   header "Restarting services..."
   stop_services
@@ -355,7 +367,7 @@ let sections = [
     ]),
     Section(title: "Misc", color: teal, rows: [
         Row(key: "Fn Esc", action: "Toggle Native Input"),
-        Row(key: "R⌥ Arrows", action: "Native text movement"),
+        Row(key: "⌃ (⇧) ←/→", action: "Move / select by word"),
         Row(key: "⌥ ⇧ S", action: "Screenshot (region)"),
         Row(key: "⌥ ⌘ ↑", action: "Mission Control"),
         Row(key: "⌥ Z", action: "Toggle bar"),
@@ -674,12 +686,16 @@ cmd_revert() {
   disable_bar_toggle_daemons
   rm -f "$CHROME_REHOME_PLIST"
   rm -f "$SHORTCUT_WIDGET_PLIST"
+  rm -f "$CONTROL_WORD_PLIST"
   rm -rf "$CHROME_REHOME_APP"
   rm -rf "$SHORTCUT_WIDGET_APP"
+  rm -rf "$CONTROL_WORD_APP"
+  rm -f "$CONTROL_WORD_ENABLED_MARKER"
   success "Config files removed"
 
   header "Restoring backups..."
   restore_backups
+  restore_control_arrow_shortcuts
 
   header "Uninstalling packages..."
   if [[ "$managed_borders" -eq 1 ]]; then
@@ -725,6 +741,7 @@ cmd_status() {
   check_launch_agent "$AEROSPACE_START_LABEL"
   check_launch_agent "$WINDOW_STATE_SAVER_LABEL"
   check_launch_agent "$SHORTCUT_WIDGET_LABEL"
+  check_launch_agent "$CONTROL_WORD_LABEL"
 
   echo ""
   if [[ -x "$ACCESSIBILITY_REPORT_HELPER" ]]; then
@@ -867,6 +884,64 @@ restore_backups() {
 }
 
 # =============================================================================
+# macOS CONTROL-ARROW SHORTCUTS
+# Control-Left/Right are Mission Control Space shortcuts by default. Omarchy
+# uses Control-Left/Right for word movement, so preserve the four existing
+# enabled flags, disable them, and let skhd translate the chords to macOS's
+# native right-Option word-navigation events. Revert restores only the flags
+# this project changed, leaving all unrelated keyboard preferences untouched.
+# =============================================================================
+configure_control_word_navigation() {
+  local hotkey_id enabled temp_plist
+
+  [[ -f "$SYMBOLIC_HOTKEYS_PLIST" ]] || {
+    warn "Could not find macOS symbolic hotkey preferences; Control-arrow may still switch Spaces"
+    return 0
+  }
+
+  if [[ ! -f "$CONTROL_ARROW_BACKUP" ]]; then
+    : > "$CONTROL_ARROW_BACKUP"
+    for hotkey_id in 79 80 81 82; do
+      enabled=$(/usr/libexec/PlistBuddy -c "Print :AppleSymbolicHotKeys:$hotkey_id:enabled" "$SYMBOLIC_HOTKEYS_PLIST" 2>/dev/null || printf 'missing')
+      printf '%s=%s\n' "$hotkey_id" "$enabled" >> "$CONTROL_ARROW_BACKUP"
+    done
+  fi
+
+  temp_plist=$(mktemp "${TMPDIR:-/tmp}/omarchy-symbolic-hotkeys.XXXXXX")
+  cp "$SYMBOLIC_HOTKEYS_PLIST" "$temp_plist"
+  for hotkey_id in 79 80 81 82; do
+    /usr/libexec/PlistBuddy -c "Set :AppleSymbolicHotKeys:$hotkey_id:enabled false" "$temp_plist" 2>/dev/null || true
+  done
+  defaults import com.apple.symbolichotkeys "$temp_plist" >/dev/null
+  rm -f "$temp_plist"
+  killall Dock >/dev/null 2>&1 || true
+  success "Control-arrow macOS Space shortcuts disabled for word navigation"
+}
+
+restore_control_arrow_shortcuts() {
+  local hotkey_id enabled temp_plist
+
+  [[ -f "$CONTROL_ARROW_BACKUP" ]] || return 0
+  [[ -f "$SYMBOLIC_HOTKEYS_PLIST" ]] || return 0
+
+  temp_plist=$(mktemp "${TMPDIR:-/tmp}/omarchy-symbolic-hotkeys.XXXXXX")
+  cp "$SYMBOLIC_HOTKEYS_PLIST" "$temp_plist"
+  while IFS='=' read -r hotkey_id enabled; do
+    [[ "$hotkey_id" =~ ^(79|80|81|82)$ ]] || continue
+    case "$enabled" in
+      true|false)
+        /usr/libexec/PlistBuddy -c "Set :AppleSymbolicHotKeys:$hotkey_id:enabled $enabled" "$temp_plist" 2>/dev/null || true
+        ;;
+    esac
+  done < "$CONTROL_ARROW_BACKUP"
+  defaults import com.apple.symbolichotkeys "$temp_plist" >/dev/null
+  rm -f "$temp_plist"
+  rm -f "$CONTROL_ARROW_BACKUP"
+  killall Dock >/dev/null 2>&1 || true
+  info "  restored Control-arrow macOS Space shortcut states"
+}
+
+# =============================================================================
 # BREW HELPERS
 # =============================================================================
 brew_install() {
@@ -945,6 +1020,15 @@ start_services() {
   skhd --start-service 2>/dev/null || \
     warn "Could not auto-start skhd — run 'skhd --start-service' manually"
 
+  info "Starting Control-arrow word navigation..."
+  launchctl unload "$CONTROL_WORD_PLIST" 2>/dev/null || true
+  if [[ -f "$CONTROL_WORD_ENABLED_MARKER" ]]; then
+    launchctl load "$CONTROL_WORD_PLIST" 2>/dev/null || \
+      warn "Could not start Control-arrow word navigation"
+  else
+    info "  awaiting successful timed canary before persistent enablement"
+  fi
+
   info "Starting sketchybar..."
   brew services start felixkratz/formulae/sketchybar 2>/dev/null || \
     brew services start sketchybar 2>/dev/null || \
@@ -999,6 +1083,9 @@ stop_services() {
   if [[ -f "$SHORTCUT_WIDGET_PLIST" ]]; then
     stop_shortcut_widget
     info "  stopped shortcut widget"
+  fi
+  if [[ -f "$CONTROL_WORD_PLIST" ]]; then
+    launchctl unload "$CONTROL_WORD_PLIST" 2>/dev/null && info "  stopped Control-arrow word navigation" || true
   fi
   if borders_enabled || [[ "$mode" == "revert" ]]; then
     stop_brew_service borders
@@ -3311,6 +3398,173 @@ NATIVE_INPUT_EOF
 }
 
 # =============================================================================
+# CONTROL-ARROW WORD NAVIGATION
+# A tail-position event tap rewrites Control-Left/Right to Option-Left/Right in
+# place. It never posts a second key event, so it cannot recursively trigger
+# skhd. macOS automatically disables slow event taps; this helper exits on that
+# signal and launchd does not restart it, making failures fail open.
+# =============================================================================
+write_control_word_navigation() {
+  info "Writing Control-arrow word-navigation helper..."
+  mkdir -p "$AEROSPACE_DIR" "$CONTROL_WORD_APP/Contents/MacOS" "$(dirname "$CONTROL_WORD_PLIST")"
+
+  cat > "$CONTROL_WORD_SRC" << 'CONTROL_WORD_SWIFT_EOF'
+import AppKit
+import ApplicationServices
+import Foundation
+
+private let leftArrow: Int64 = 123
+private let rightArrow: Int64 = 124
+private let nativeInputNames = ["omarchy_native_input_active"]
+private var eventTap: CFMachPort?
+
+private func nativeInputIsActive() -> Bool {
+    let fm = FileManager.default
+    if nativeInputNames.contains(where: { fm.fileExists(atPath: "/tmp/\($0)") }) {
+        return true
+    }
+    if let tmp = ProcessInfo.processInfo.environment["TMPDIR"] {
+        return nativeInputNames.contains(where: {
+            fm.fileExists(atPath: URL(fileURLWithPath: tmp).appendingPathComponent($0).path)
+        })
+    }
+    return false
+}
+
+private let callback: CGEventTapCallBack = { _, type, event, _ in
+    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        fputs("control-word-navigation: event tap disabled; exiting fail-open\n", stderr)
+        CFRunLoopStop(CFRunLoopGetMain())
+        return Unmanaged.passUnretained(event)
+    }
+
+    guard type == .keyDown || type == .keyUp else {
+        return Unmanaged.passUnretained(event)
+    }
+
+    let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+    guard keycode == leftArrow || keycode == rightArrow else {
+        return Unmanaged.passUnretained(event)
+    }
+
+    var flags = event.flags
+    guard flags.contains(.maskControl),
+          !flags.contains(.maskCommand),
+          !flags.contains(.maskAlternate),
+          !nativeInputIsActive() else {
+        return Unmanaged.passUnretained(event)
+    }
+
+    flags.remove(.maskControl)
+    flags.insert(.maskAlternate)
+    event.flags = flags
+    return Unmanaged.passUnretained(event)
+}
+
+private func exitAfterSeconds() -> TimeInterval? {
+    guard let index = CommandLine.arguments.firstIndex(of: "--exit-after"),
+          CommandLine.arguments.indices.contains(index + 1),
+          let seconds = TimeInterval(CommandLine.arguments[index + 1]),
+          seconds > 0 else {
+        return nil
+    }
+    return seconds
+}
+
+let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+guard AXIsProcessTrustedWithOptions(prompt) else {
+    fputs("control-word-navigation: Accessibility permission is required\n", stderr)
+    exit(2)
+}
+
+let mask = (CGEventMask(1) << CGEventType.keyDown.rawValue)
+    | (CGEventMask(1) << CGEventType.keyUp.rawValue)
+
+eventTap = CGEvent.tapCreate(
+    tap: .cgSessionEventTap,
+    place: .tailAppendEventTap,
+    options: .defaultTap,
+    eventsOfInterest: mask,
+    callback: callback,
+    userInfo: nil
+)
+
+guard let eventTap else {
+    fputs("control-word-navigation: could not create event tap\n", stderr)
+    exit(3)
+}
+
+let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
+CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+CGEvent.tapEnable(tap: eventTap, enable: true)
+
+if let seconds = exitAfterSeconds() {
+    DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+        fputs("control-word-navigation: canary timeout reached; exiting\n", stderr)
+        CFRunLoopStop(CFRunLoopGetMain())
+    }
+}
+
+fputs("control-word-navigation: active\n", stderr)
+CFRunLoopRun()
+CONTROL_WORD_SWIFT_EOF
+
+  swiftc -O "$CONTROL_WORD_SRC" -o "$CONTROL_WORD_BIN"
+  chmod +x "$CONTROL_WORD_BIN"
+
+  cat > "$CONTROL_WORD_APP/Contents/Info.plist" << CONTROL_WORD_INFO_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key>
+  <string>control_word_navigation</string>
+  <key>CFBundleIdentifier</key>
+  <string>$CONTROL_WORD_LABEL</string>
+  <key>CFBundleName</key>
+  <string>Omarchy Control Word Navigation</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>LSUIElement</key>
+  <true/>
+</dict>
+</plist>
+CONTROL_WORD_INFO_EOF
+
+  /usr/bin/codesign --force --sign - --identifier "$CONTROL_WORD_LABEL" "$CONTROL_WORD_APP" >/dev/null 2>&1 || \
+    warn "Could not ad-hoc sign $CONTROL_WORD_APP"
+  xattr -dr com.apple.quarantine "$CONTROL_WORD_APP" 2>/dev/null || true
+  xattr -dr com.apple.provenance "$CONTROL_WORD_APP" 2>/dev/null || true
+
+  cat > "$CONTROL_WORD_PLIST" << CONTROL_WORD_PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$CONTROL_WORD_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$CONTROL_WORD_BIN</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>$WINDOW_STATE_LOG</string>
+  <key>StandardErrorPath</key>
+  <string>$WINDOW_STATE_LOG</string>
+</dict>
+</plist>
+CONTROL_WORD_PLIST_EOF
+
+  success "Control-arrow word-navigation helper written"
+}
+
+# =============================================================================
 # WINDOW CYCLE HELPER
 # Cycles focus through every AeroSpace-managed window, switching workspaces as
 # needed before focusing the target window.
@@ -5466,6 +5720,61 @@ BORDERS_EOF
 }
 
 # =============================================================================
+# CONTROL-ARROW WORD-NAVIGATION ROLLOUT
+# Persistent enablement is deliberately gated behind a successful timed canary.
+# =============================================================================
+cmd_control_word_navigation() {
+  local action="${2:-status}"
+  local seconds="${3:-60}"
+
+  case "$action" in
+    canary)
+      [[ "$seconds" =~ ^[1-9][0-9]*$ ]] || {
+        error "Canary duration must be a positive number of seconds"
+        exit 2
+      }
+      [[ -x "$CONTROL_WORD_BIN" ]] || write_control_word_navigation
+      launchctl unload "$CONTROL_WORD_PLIST" 2>/dev/null || true
+      info "Starting fail-open Control-arrow canary for ${seconds}s..."
+      /usr/bin/open -W -n -g \
+        -o "$WINDOW_STATE_LOG" \
+        --stderr "$WINDOW_STATE_LOG" \
+        -a "$CONTROL_WORD_APP" --args --exit-after "$seconds"
+      success "Control-arrow canary exited; persistent mode remains disabled"
+      ;;
+    enable)
+      [[ -x "$CONTROL_WORD_BIN" ]] || write_control_word_navigation
+      touch "$CONTROL_WORD_ENABLED_MARKER"
+      launchctl unload "$CONTROL_WORD_PLIST" 2>/dev/null || true
+      if ! launchctl load "$CONTROL_WORD_PLIST"; then
+        rm -f "$CONTROL_WORD_ENABLED_MARKER"
+        error "Could not enable Control-arrow word navigation"
+        exit 1
+      fi
+      success "Persistent Control-arrow word navigation enabled"
+      ;;
+    disable)
+      launchctl unload "$CONTROL_WORD_PLIST" 2>/dev/null || true
+      rm -f "$CONTROL_WORD_ENABLED_MARKER"
+      success "Control-arrow word navigation disabled"
+      ;;
+    status)
+      if launchctl print "gui/$(id -u)/$CONTROL_WORD_LABEL" >/dev/null 2>&1; then
+        echo "Control-arrow word navigation: enabled and running"
+      elif [[ -f "$CONTROL_WORD_ENABLED_MARKER" ]]; then
+        echo "Control-arrow word navigation: enabled but not running"
+      else
+        echo "Control-arrow word navigation: disabled; run canary before enable"
+      fi
+      ;;
+    *)
+      error "Usage: ./omarchy.sh control-word-navigation canary [seconds]|enable|disable|status"
+      exit 2
+      ;;
+  esac
+}
+
+# =============================================================================
 # USAGE / ENTRY POINT
 # =============================================================================
 usage() {
@@ -5489,6 +5798,8 @@ usage() {
   echo "                         show the macOS Secure Input owner"
   echo "  ./omarchy.sh accessibility"
   echo "                         show Accessibility permissions that need to be redone"
+  echo "  ./omarchy.sh control-word-navigation canary [seconds]|enable|disable|status"
+  echo "                         safely test and control Control-arrow word navigation"
   echo "  ./omarchy.sh revert    undo everything, restore previous state"
   echo "  ./omarchy.sh status    show install and service status"
   echo ""
@@ -5505,6 +5816,7 @@ case "${1:-}" in
   shortcuts-widget) cmd_shortcuts_widget ;;
   secure-input)  cmd_secure_input  "$@" ;;
   accessibility) cmd_accessibility "$@" ;;
+  control-word-navigation) cmd_control_word_navigation "$@" ;;
   revert)        cmd_revert        ;;
   status)        cmd_status        ;;
   "")            usage; exit 0     ;;
