@@ -80,7 +80,11 @@ assignments are generated from the displays attached during install/refresh:
 and `30`-`39` only when a third external display is actually attached. Missing
 external slots are not forced to the built-in display. Slot-0 workspaces are
 intentionally left unforced so the built-in display keeps its current visible
-workspace while an external display changes spaces. After an external-slot
+workspace while an external display changes spaces. Every monitor-scoped switch
+also focuses the resolved monitor and pins the requested workspace to it before
+activation. This keeps newly created or previously misplaced workspaces on the
+correct display even when the generated force assignments are stale because a
+display was attached after the last install/refresh. After an external-slot
 switch, the helper restores the previously visible workspace on the other
 monitors, then returns focus to the target external monitor and centers the
 mouse on that monitor so the next number-row shortcut continues resolving

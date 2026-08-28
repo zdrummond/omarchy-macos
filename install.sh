@@ -721,11 +721,11 @@ cmd_status() {
   header "omarchy-macos status"
   echo ""
 
-  check_tool "aerospace"    "$(brew list nikitabobko/tap/aerospace &>/dev/null && echo yes || echo no)"
-  check_tool "skhd"         "$(brew list koekeishiya/formulae/skhd &>/dev/null && echo yes || echo no)"
-  check_tool "sketchybar"   "$(brew list FelixKratz/formulae/sketchybar &>/dev/null && echo yes || echo no)"
-  if brew list FelixKratz/formulae/borders &>/dev/null; then
-    check_tool "jankyborders (optional)" "yes"
+  check_tool "aerospace" "aerospace"
+  check_tool "skhd" "skhd"
+  check_tool "sketchybar" "sketchybar"
+  if command -v borders >/dev/null 2>&1 || borders_enabled; then
+    check_tool "jankyborders (optional)" "borders"
   else
     echo -e "  ${YELLOW}○${RESET} jankyborders optional — disabled"
   fi
@@ -734,7 +734,7 @@ cmd_status() {
   check_aerospace_app
   check_launch_agent "com.koekeishiya.skhd"
   check_service "sketchybar"
-  if borders_enabled || brew list FelixKratz/formulae/borders &>/dev/null; then
+  if borders_enabled || command -v borders >/dev/null 2>&1; then
     check_service "borders"
   fi
   check_launch_agent "$AEROSPACE_START_LABEL"
@@ -1108,15 +1108,31 @@ stop_brew_service() {
 }
 
 check_service() {
-  local name="$1"
-  local status
-  status=$(brew services list 2>/dev/null | awk -v n="$name" '$1==n {print $2}')
+  local name="$1" label="${2:-homebrew.mxcl.$1}"
+  local launchd_details launchd_state status
+
+  # Homebrew can omit a running service when its original tap is no longer
+  # trusted or available. launchd is the authority for the current user
+  # session, so inspect the generated service label before consulting brew.
+  if launchd_details=$(launchctl print "gui/$(id -u)/$label" 2>/dev/null); then
+    launchd_state=$(awk -F'= ' '/^[[:space:]]*state = / {print $2; exit}' <<< "$launchd_details")
+    if [[ "$launchd_state" == "running" ]]; then
+      echo -e "  ${GREEN}●${RESET} $name — running"
+    elif [[ -n "$launchd_state" ]]; then
+      echo -e "  ${YELLOW}●${RESET} $name — $launchd_state"
+    else
+      echo -e "  ${YELLOW}●${RESET} $name — loaded"
+    fi
+    return 0
+  fi
+
+  status=$(brew services list 2>/dev/null | awk -v n="$name" '$1==n {print $2}' || true)
   if [[ "$status" == "started" ]]; then
     echo -e "  ${GREEN}●${RESET} $name — running"
   elif [[ -n "$status" ]]; then
     echo -e "  ${YELLOW}●${RESET} $name — $status"
   else
-    echo -e "  ${RED}○${RESET} $name — not found"
+    echo -e "  ${RED}○${RESET} $name — not loaded"
   fi
 }
 
@@ -1159,8 +1175,8 @@ check_window_state() {
 }
 
 check_tool() {
-  local name="$1" installed="$2"
-  if [[ "$installed" == "yes" ]]; then
+  local name="$1" command_name="$2"
+  if command -v "$command_name" >/dev/null 2>&1; then
     echo -e "  ${GREEN}✓${RESET} $name installed"
   else
     echo -e "  ${RED}✗${RESET} $name not installed"
@@ -1575,6 +1591,12 @@ omarchy_switch_workspace_on_slot_monitor() {
     done < <(omarchy_monitor_ids_by_slot)
   fi
 
+  # Focus the resolved monitor before activating the workspace so a workspace
+  # that does not exist yet is created on the intended display. Then pin an
+  # existing workspace there as well: the generated force-assignment table can
+  # be stale when a display is attached after the last install/refresh.
+  "$OMARCHY_AEROSPACE_BIN" focus-monitor "$monitor_id"
+  "$OMARCHY_AEROSPACE_BIN" move-workspace-to-monitor --workspace "$workspace" "$monitor_id" >/dev/null 2>&1 || true
   "$OMARCHY_AEROSPACE_BIN" workspace "$workspace"
 
   if ((${#restore_workspaces[@]})); then
