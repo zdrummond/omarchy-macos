@@ -57,6 +57,11 @@ The remapper must pass a timed canary before it can be enabled persistently:
 ./omarchy.sh control-word-navigation enable
 ```
 
+The canary records a pass only after the helper stays healthy for the full
+timeout. That pass is bound to the exact helper executable, so `enable` refuses
+to run without it and a changed helper requires another canary. Enablement also
+waits for launchd to report the helper as actually running.
+
 Disable it immediately with `./omarchy.sh control-word-navigation disable`.
 The helper rewrites events in place, exits if macOS disables its event tap, and
 is not automatically restarted after a fault.

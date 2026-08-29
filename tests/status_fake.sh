@@ -81,6 +81,7 @@ output="$(bash "$ROOT/install.sh" status)"
 [[ "$output" == *"AeroSpace — server reachable"* ]]
 [[ "$output" == *"sketchybar — running"* ]]
 [[ "$output" == *"borders — running"* ]]
+[[ "$output" == *"control_word_navigation — running without valid canary enablement"* ]]
 [[ "$output" != *"not installed"* ]]
 [[ "$output" != *"not found"* ]]
 

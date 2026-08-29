@@ -20,9 +20,13 @@ Bring the [Omarchy](https://omarchy.org/) / Hyprland Linux tiling workflow to ma
   or synthesizes a second key event. Native Input releases the chords unchanged.
   The helper exits fail-open if macOS disables its event tap, and launchd does
   not restart a failed process. Persistent enablement requires a successful
-  time-bounded canary. Install/refresh disables macOS's conflicting native Space
-  shortcuts (symbolic hotkeys 79–82) after saving their enabled flags; revert
-  restores only those four flags.
+  time-bounded canary for the exact helper executable. The helper writes its
+  canary success token only after surviving the full timeout; persistent
+  enablement refuses a missing or stale executable digest. Changing the helper
+  executable invalidates both the canary attestation and persistent-enable marker.
+  Install/refresh disables macOS's conflicting native Space shortcuts (symbolic
+  hotkeys 79–82) after saving their enabled flags; revert restores only those
+  four flags.
 - **Catppuccin Mocha color scheme.** Matches Omarchy's default theme (mauve accent for optional active window borders, base for the bar background).
 - **Zero visual clutter.** Disable macOS window animations, uniform 8px gaps, no Dock reliance.
 - **Single idempotent command wrapper.** `./omarchy.sh install` sets everything
@@ -129,8 +133,14 @@ snapshot or login-time app launch cannot crowd the message workspace.
 - **Input-remap rollout safety.** `./omarchy.sh control-word-navigation canary
   [seconds]` runs the Control-arrow helper with a mandatory timeout and never
   enables it persistently. `enable`, `disable`, and `status` manage the separate
-  no-KeepAlive LaunchAgent. A stopped, crashed, timed-out, or permission-denied
-  helper leaves ordinary keyboard input untouched.
+  no-KeepAlive LaunchAgent. A canary pass is recorded as the SHA-256 digest of
+  the exact helper executable only after its event tap survives the full
+  timeout. `enable` refuses absent or mismatched attestations, and both the
+  attestation and enable marker are invalidated whenever the executable
+  changes. Loading the LaunchAgent counts as successful only after launchd
+  reports `state = running`; status distinguishes loaded-but-stopped jobs from
+  running ones. A stopped, crashed, timed-out, or permission-denied helper
+  leaves ordinary keyboard input untouched.
   Helper startup, canary, timeout, and fault messages use the shared daily
   rotated window-state diagnostic log rather than an unbounded dedicated log.
 - **Focus changes do not warp the pointer.** Browser links and buttons must

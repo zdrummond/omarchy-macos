@@ -60,6 +60,7 @@ CONTROL_WORD_SRC="$AEROSPACE_DIR/control_word_navigation.swift"
 CONTROL_WORD_BIN="$CONTROL_WORD_APP/Contents/MacOS/control_word_navigation"
 CONTROL_WORD_PLIST="$HOME/Library/LaunchAgents/$CONTROL_WORD_LABEL.plist"
 CONTROL_WORD_ENABLED_MARKER="$BACKUP_DIR/.control-word-navigation-enabled"
+CONTROL_WORD_CANARY_MARKER="$BACKUP_DIR/control-word-navigation-canary.sha256"
 
 CHROME_REHOME_SRC="$SKETCHY_DIR/plugins/chrome_rehome.swift"
 CHROME_REHOME_LABEL="com.omarchy-macos.chrome_rehome"
@@ -690,6 +691,7 @@ cmd_revert() {
   rm -rf "$SHORTCUT_WIDGET_APP"
   rm -rf "$CONTROL_WORD_APP"
   rm -f "$CONTROL_WORD_ENABLED_MARKER"
+  rm -f "$CONTROL_WORD_CANARY_MARKER"
   success "Config files removed"
 
   header "Restoring backups..."
@@ -740,7 +742,7 @@ cmd_status() {
   check_launch_agent "$AEROSPACE_START_LABEL"
   check_launch_agent "$WINDOW_STATE_SAVER_LABEL"
   check_launch_agent "$SHORTCUT_WIDGET_LABEL"
-  check_launch_agent "$CONTROL_WORD_LABEL"
+  check_control_word_agent
 
   echo ""
   if [[ -x "$ACCESSIBILITY_REPORT_HELPER" ]]; then
@@ -1022,8 +1024,17 @@ start_services() {
   info "Starting Control-arrow word navigation..."
   launchctl unload "$CONTROL_WORD_PLIST" 2>/dev/null || true
   if [[ -f "$CONTROL_WORD_ENABLED_MARKER" ]]; then
-    launchctl load "$CONTROL_WORD_PLIST" 2>/dev/null || \
+    if ! control_word_canary_valid; then
+      rm -f "$CONTROL_WORD_ENABLED_MARKER"
+      warn "Control-arrow helper changed or has no valid canary; run canary and enable again"
+    elif ! launchctl load "$CONTROL_WORD_PLIST" 2>/dev/null; then
+      rm -f "$CONTROL_WORD_ENABLED_MARKER"
       warn "Could not start Control-arrow word navigation"
+    elif ! control_word_wait_for_running; then
+      launchctl unload "$CONTROL_WORD_PLIST" 2>/dev/null || true
+      rm -f "$CONTROL_WORD_ENABLED_MARKER"
+      warn "Control-arrow LaunchAgent loaded but did not reach state = running"
+    fi
   else
     info "  awaiting successful timed canary before persistent enablement"
   fi
@@ -1142,6 +1153,22 @@ check_launch_agent() {
     echo -e "  ${GREEN}●${RESET} $label — loaded"
   else
     echo -e "  ${YELLOW}●${RESET} $label — not loaded"
+  fi
+}
+
+check_control_word_agent() {
+  local state
+  state=$(control_word_launchd_state)
+  if [[ "$state" == "running" ]] && [[ -f "$CONTROL_WORD_ENABLED_MARKER" ]] && control_word_canary_valid; then
+    echo -e "  ${GREEN}●${RESET} $CONTROL_WORD_LABEL — enabled and running"
+  elif [[ "$state" == "running" ]]; then
+    echo -e "  ${YELLOW}●${RESET} $CONTROL_WORD_LABEL — running without valid canary enablement"
+  elif [[ -f "$CONTROL_WORD_ENABLED_MARKER" ]]; then
+    echo -e "  ${YELLOW}●${RESET} $CONTROL_WORD_LABEL — enabled but not running (state: ${state:-not loaded})"
+  elif control_word_canary_valid; then
+    echo -e "  ${YELLOW}○${RESET} $CONTROL_WORD_LABEL — canary passed, persistent mode disabled"
+  else
+    echo -e "  ${YELLOW}○${RESET} $CONTROL_WORD_LABEL — disabled; run canary before enable"
   fi
 }
 
@@ -3429,7 +3456,11 @@ write_control_word_navigation() {
   info "Writing Control-arrow word-navigation helper..."
   mkdir -p "$AEROSPACE_DIR" "$CONTROL_WORD_APP/Contents/MacOS" "$(dirname "$CONTROL_WORD_PLIST")"
 
-  cat > "$CONTROL_WORD_SRC" << 'CONTROL_WORD_SWIFT_EOF'
+  local previous_digest source_tmp source_changed=0
+  previous_digest=$(control_word_binary_digest 2>/dev/null || true)
+  source_tmp=$(mktemp "${TMPDIR:-/tmp}/omarchy-control-word-source.XXXXXX")
+
+  cat > "$source_tmp" << 'CONTROL_WORD_SWIFT_EOF'
 import AppKit
 import ApplicationServices
 import Foundation
@@ -3492,6 +3523,24 @@ private func exitAfterSeconds() -> TimeInterval? {
     return seconds
 }
 
+private func canarySuccessPath() -> String? {
+    guard let index = CommandLine.arguments.firstIndex(of: "--canary-success-file"),
+          CommandLine.arguments.indices.contains(index + 1) else {
+        return nil
+    }
+    return CommandLine.arguments[index + 1]
+}
+
+private func writeCanarySuccess(to path: String) -> Bool {
+    do {
+        try "passed\n".write(toFile: path, atomically: true, encoding: .utf8)
+        return true
+    } catch {
+        fputs("control-word-navigation: could not write canary success token: \(error)\n", stderr)
+        return false
+    }
+}
+
 let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
 guard AXIsProcessTrustedWithOptions(prompt) else {
     fputs("control-word-navigation: Accessibility permission is required\n", stderr)
@@ -3521,7 +3570,11 @@ CGEvent.tapEnable(tap: eventTap, enable: true)
 
 if let seconds = exitAfterSeconds() {
     DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
-        fputs("control-word-navigation: canary timeout reached; exiting\n", stderr)
+        if let path = canarySuccessPath(), writeCanarySuccess(to: path) {
+            fputs("control-word-navigation: canary passed after full timeout\n", stderr)
+        } else {
+            fputs("control-word-navigation: canary timeout reached without success token\n", stderr)
+        }
         CFRunLoopStop(CFRunLoopGetMain())
     }
 }
@@ -3530,8 +3583,19 @@ fputs("control-word-navigation: active\n", stderr)
 CFRunLoopRun()
 CONTROL_WORD_SWIFT_EOF
 
-  swiftc -O "$CONTROL_WORD_SRC" -o "$CONTROL_WORD_BIN"
-  chmod +x "$CONTROL_WORD_BIN"
+  if [[ -f "$CONTROL_WORD_SRC" ]] && cmp -s "$source_tmp" "$CONTROL_WORD_SRC"; then
+    rm -f "$source_tmp"
+  else
+    mv "$source_tmp" "$CONTROL_WORD_SRC"
+    source_changed=1
+  fi
+
+  if [[ "$source_changed" -eq 1 || ! -x "$CONTROL_WORD_BIN" ]]; then
+    swiftc -O "$CONTROL_WORD_SRC" -o "$CONTROL_WORD_BIN"
+    chmod +x "$CONTROL_WORD_BIN"
+  else
+    info "Control-arrow helper source unchanged; keeping existing binary and canary attestation"
+  fi
 
   cat > "$CONTROL_WORD_APP/Contents/Info.plist" << CONTROL_WORD_INFO_EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -3556,10 +3620,14 @@ CONTROL_WORD_SWIFT_EOF
 </plist>
 CONTROL_WORD_INFO_EOF
 
-  /usr/bin/codesign --force --sign - --identifier "$CONTROL_WORD_LABEL" "$CONTROL_WORD_APP" >/dev/null 2>&1 || \
-    warn "Could not ad-hoc sign $CONTROL_WORD_APP"
+  if [[ "$source_changed" -eq 1 ]] || ! /usr/bin/codesign --verify "$CONTROL_WORD_APP" >/dev/null 2>&1; then
+    /usr/bin/codesign --force --sign - --identifier "$CONTROL_WORD_LABEL" "$CONTROL_WORD_APP" >/dev/null 2>&1 || \
+      warn "Could not ad-hoc sign $CONTROL_WORD_APP"
+  fi
   xattr -dr com.apple.quarantine "$CONTROL_WORD_APP" 2>/dev/null || true
   xattr -dr com.apple.provenance "$CONTROL_WORD_APP" 2>/dev/null || true
+
+  invalidate_control_word_canary_if_binary_changed "$previous_digest"
 
   cat > "$CONTROL_WORD_PLIST" << CONTROL_WORD_PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -5743,32 +5811,120 @@ BORDERS_EOF
 # CONTROL-ARROW WORD-NAVIGATION ROLLOUT
 # Persistent enablement is deliberately gated behind a successful timed canary.
 # =============================================================================
+control_word_binary_digest() {
+  [[ -x "$CONTROL_WORD_BIN" ]] || return 1
+  /usr/bin/shasum -a 256 "$CONTROL_WORD_BIN" | awk '{print $1}'
+}
+
+control_word_canary_valid() {
+  local recorded_digest current_digest
+  [[ -f "$CONTROL_WORD_CANARY_MARKER" ]] || return 1
+  recorded_digest=$(head -n 1 "$CONTROL_WORD_CANARY_MARKER" 2>/dev/null || true)
+  [[ "$recorded_digest" =~ ^[[:xdigit:]]{64}$ ]] || return 1
+  current_digest=$(control_word_binary_digest 2>/dev/null || true)
+  [[ -n "$current_digest" && "$recorded_digest" == "$current_digest" ]]
+}
+
+invalidate_control_word_canary_if_binary_changed() {
+  local previous_digest="${1:-}" current_digest
+  current_digest=$(control_word_binary_digest 2>/dev/null || true)
+  if [[ -z "$previous_digest" || -z "$current_digest" || "$previous_digest" != "$current_digest" ]]; then
+    rm -f "$CONTROL_WORD_CANARY_MARKER" "$CONTROL_WORD_ENABLED_MARKER"
+  fi
+}
+
+record_control_word_canary() {
+  local expected_digest="${1:-}" current_digest marker_tmp
+  current_digest=$(control_word_binary_digest) || return 1
+  [[ -n "$expected_digest" ]] || expected_digest="$current_digest"
+  [[ "$expected_digest" == "$current_digest" ]] || return 1
+  mkdir -p "$BACKUP_DIR"
+  marker_tmp=$(mktemp "$BACKUP_DIR/.control-word-canary.XXXXXX")
+  printf '%s\n' "$expected_digest" > "$marker_tmp"
+  mv "$marker_tmp" "$CONTROL_WORD_CANARY_MARKER"
+}
+
+control_word_launchd_state() {
+  launchctl print "gui/$(id -u)/$CONTROL_WORD_LABEL" 2>/dev/null |
+    awk -F'= ' '/^[[:space:]]*state = / {print $2; exit}' || true
+}
+
+control_word_wait_for_running() {
+  local attempts="${OMARCHY_CONTROL_WORD_START_ATTEMPTS:-20}"
+  local delay="${OMARCHY_CONTROL_WORD_START_DELAY:-0.1}"
+  local state=""
+  local attempt
+  for ((attempt = 0; attempt < attempts; attempt++)); do
+    state=$(control_word_launchd_state)
+    [[ "$state" == "running" ]] && return 0
+    sleep "$delay"
+  done
+  return 1
+}
+
 cmd_control_word_navigation() {
   local action="${2:-status}"
   local seconds="${3:-60}"
+  local open_bin="${OMARCHY_OPEN_BIN:-/usr/bin/open}"
+  local state=""
 
   case "$action" in
     canary)
+      local canary_digest current_digest result_file result
       [[ "$seconds" =~ ^[1-9][0-9]*$ ]] || {
         error "Canary duration must be a positive number of seconds"
         exit 2
       }
       [[ -x "$CONTROL_WORD_BIN" ]] || write_control_word_navigation
+      canary_digest=$(control_word_binary_digest) || {
+        error "Could not fingerprint Control-arrow helper"
+        exit 1
+      }
       launchctl unload "$CONTROL_WORD_PLIST" 2>/dev/null || true
+      rm -f "$CONTROL_WORD_CANARY_MARKER" "$CONTROL_WORD_ENABLED_MARKER"
+      result_file=$(mktemp "${TMPDIR:-/tmp}/omarchy-control-word-canary.XXXXXX")
       info "Starting fail-open Control-arrow canary for ${seconds}s..."
-      /usr/bin/open -W -n -g \
-        -o "$WINDOW_STATE_LOG" \
-        --stderr "$WINDOW_STATE_LOG" \
-        -a "$CONTROL_WORD_APP" --args --exit-after "$seconds"
-      success "Control-arrow canary exited; persistent mode remains disabled"
+      if ! "$open_bin" -W -n -g \
+          -o "$WINDOW_STATE_LOG" \
+          --stderr "$WINDOW_STATE_LOG" \
+          -a "$CONTROL_WORD_APP" --args \
+          --exit-after "$seconds" \
+          --canary-success-file "$result_file"; then
+        rm -f "$result_file"
+        error "Control-arrow canary could not be launched"
+        exit 1
+      fi
+      result=$(cat "$result_file" 2>/dev/null || true)
+      rm -f "$result_file"
+      current_digest=$(control_word_binary_digest 2>/dev/null || true)
+      if [[ "$result" != "passed" ]] ||
+         [[ "$current_digest" != "$canary_digest" ]] ||
+         ! record_control_word_canary "$canary_digest"; then
+        error "Control-arrow canary failed; persistent enablement remains blocked"
+        exit 1
+      fi
+      success "Control-arrow canary passed; persistent mode remains disabled until enable"
       ;;
     enable)
       [[ -x "$CONTROL_WORD_BIN" ]] || write_control_word_navigation
+      if ! control_word_canary_valid; then
+        launchctl unload "$CONTROL_WORD_PLIST" 2>/dev/null || true
+        rm -f "$CONTROL_WORD_ENABLED_MARKER"
+        error "A successful canary for the current helper is required before enable"
+        exit 1
+      fi
       touch "$CONTROL_WORD_ENABLED_MARKER"
       launchctl unload "$CONTROL_WORD_PLIST" 2>/dev/null || true
       if ! launchctl load "$CONTROL_WORD_PLIST"; then
         rm -f "$CONTROL_WORD_ENABLED_MARKER"
         error "Could not enable Control-arrow word navigation"
+        exit 1
+      fi
+      if ! control_word_wait_for_running; then
+        state=$(control_word_launchd_state)
+        launchctl unload "$CONTROL_WORD_PLIST" 2>/dev/null || true
+        rm -f "$CONTROL_WORD_ENABLED_MARKER"
+        error "Control-arrow LaunchAgent did not reach state = running (state: ${state:-not loaded})"
         exit 1
       fi
       success "Persistent Control-arrow word navigation enabled"
@@ -5779,10 +5935,17 @@ cmd_control_word_navigation() {
       success "Control-arrow word navigation disabled"
       ;;
     status)
-      if launchctl print "gui/$(id -u)/$CONTROL_WORD_LABEL" >/dev/null 2>&1; then
+      state=$(control_word_launchd_state)
+      if [[ "$state" == "running" ]] && [[ -f "$CONTROL_WORD_ENABLED_MARKER" ]] && control_word_canary_valid; then
         echo "Control-arrow word navigation: enabled and running"
+      elif [[ "$state" == "running" ]] && [[ -f "$CONTROL_WORD_ENABLED_MARKER" ]]; then
+        echo "Control-arrow word navigation: running with invalid canary attestation"
       elif [[ -f "$CONTROL_WORD_ENABLED_MARKER" ]]; then
-        echo "Control-arrow word navigation: enabled but not running"
+        echo "Control-arrow word navigation: enabled but not running (launchd state: ${state:-not loaded})"
+      elif [[ "$state" == "running" ]]; then
+        echo "Control-arrow word navigation: running without valid canary enablement"
+      elif control_word_canary_valid; then
+        echo "Control-arrow word navigation: canary passed; persistent mode disabled"
       else
         echo "Control-arrow word navigation: disabled; run canary before enable"
       fi

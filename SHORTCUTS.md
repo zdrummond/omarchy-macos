@@ -36,7 +36,8 @@ Standard **Command + Tab** remains the macOS application switcher.
 The Control-arrow bindings replace macOS's native Mission Control shortcuts for
 moving between Spaces. Press Fn + Escape to temporarily pass Control-arrow
 through unchanged. The remapper is fail-open and is managed with
-`./omarchy.sh control-word-navigation canary|enable|disable|status`.
+`./omarchy.sh control-word-navigation canary|enable|disable|status`. A canary
+pass is required for the current helper executable before `enable` succeeds.
 
 ## Window Focus and Movement
 

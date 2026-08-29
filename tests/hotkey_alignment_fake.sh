@@ -147,12 +147,35 @@ grep -Fq 'flags.remove(.maskControl)' "$CONTROL_WORD_GENERATED"
 grep -Fq 'flags.insert(.maskAlternate)' "$CONTROL_WORD_GENERATED"
 grep -Fq 'tapDisabledByTimeout' "$CONTROL_WORD_GENERATED"
 grep -Fq 'CFRunLoopStop(CFRunLoopGetMain())' "$CONTROL_WORD_GENERATED"
+grep -Fq 'Accessibility permission is required' "$CONTROL_WORD_GENERATED"
+grep -Fq 'could not create event tap' "$CONTROL_WORD_GENERATED"
+grep -Fq -- '--canary-success-file' "$CONTROL_WORD_GENERATED"
+/usr/bin/perl -0777 -e '
+  my $source = <>;
+  die "canary success must be written only from the full-timeout callback\n"
+    unless $source =~ /asyncAfter\(deadline: \.now\(\) \+ seconds\).*?writeCanarySuccess/s;
+  my ($before_timer) = split /if let seconds = exitAfterSeconds\(\)/, $source, 2;
+  die "canary success is written before the timeout callback\n"
+    if $before_timer =~ /writeCanarySuccess\(to:/;
+' "$CONTROL_WORD_GENERATED"
 ! grep -Fq 'CGEvent.post' "$CONTROL_WORD_GENERATED"
 ! grep -Fq 'skhd -k "ralt' "$SKHD_GENERATED"
 [ -x "$CONTROL_WORD_BIN" ]
 plutil -lint "$CONTROL_WORD_PLIST" >/dev/null
 ! grep -Fq '<key>KeepAlive</key>' "$CONTROL_WORD_PLIST"
 grep -Fq '<string>/tmp/omarchy_window_state.log</string>' "$CONTROL_WORD_PLIST"
+
+# The rollout command must enforce a digest-bound canary and verify launchd's
+# actual running state rather than merely accepting a loaded job.
+/usr/bin/perl -0777 -e '
+  my $source = <>;
+  die "enable does not require a valid canary\n"
+    unless $source =~ /enable\).*?control_word_canary_valid.*?launchctl load/s;
+  die "enable does not wait for launchd state = running\n"
+    unless $source =~ /enable\).*?control_word_wait_for_running/s;
+  die "helper regeneration does not invalidate stale attestations\n"
+    unless $source =~ /write_control_word_navigation\(\).*?invalidate_control_word_canary_if_binary_changed/s;
+' "$ROOT/install.sh"
 
 # Resetting an already-normal session must not alter the user's bar visibility.
 printf '1' > "$XDG_RUNTIME_DIR/omarchy_sketchybar_visible"
