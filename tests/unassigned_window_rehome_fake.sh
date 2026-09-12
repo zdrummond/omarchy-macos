@@ -33,12 +33,13 @@ cmd="${1:-}"
 shift || true
 
 format_row() {
-  local format="$1" id="$2" workspace="$3" app="$4" bundle="$5"
+  local format="$1" id="$2" workspace="$3" app="$4" bundle="$5" title="${6:-}"
   local out="$format"
   out="${out//%\{window-id\}/$id}"
   out="${out//%\{workspace\}/$workspace}"
   out="${out//%\{app-name\}/$app}"
   out="${out//%\{app-bundle-id\}/$bundle}"
+  out="${out//%\{window-title\}/$title}"
   printf '%s\n' "$out"
 }
 
@@ -62,14 +63,14 @@ case "$cmd" in
       esac
     done
     if [[ "$focused" == "1" ]]; then
-      while IFS='|' read -r id workspace app bundle; do
+      while IFS='|' read -r id workspace app bundle title; do
         [[ -n "$id" ]] || continue
-        format_row "$format" "$id" "$workspace" "$app" "$bundle"
+        format_row "$format" "$id" "$workspace" "$app" "$bundle" "$title"
       done < "$OMARCHY_FAKE_FOCUSED"
     else
-      while IFS='|' read -r id workspace app bundle; do
+      while IFS='|' read -r id workspace app bundle title; do
         [[ -n "$id" ]] || continue
-        format_row "$format" "$id" "$workspace" "$app" "$bundle"
+        format_row "$format" "$id" "$workspace" "$app" "$bundle" "$title"
       done < "$OMARCHY_FAKE_WINDOWS"
     fi
     ;;
@@ -83,6 +84,10 @@ case "$cmd" in
   focus)
     [[ "${1:-}" == "--window-id" ]]
     printf 'focus:%s\n' "${2:-}" >> "$OMARCHY_FAKE_COMMANDS"
+    ;;
+  layout)
+    [[ "${1:-}" == "--window-id" ]]
+    printf 'layout:%s:%s\n' "${2:-}" "${3:-}" >> "$OMARCHY_FAKE_COMMANDS"
     ;;
   *)
     printf 'unexpected fake aerospace command: %s\n' "$cmd" >&2
@@ -129,6 +134,13 @@ run_case() {
 }
 
 write_default_aliases
+printf '60|04|coreautha|com.apple.LocalAuthentication.UIAgent|1Password Touch ID\n' > "$WINDOWS_FILE"
+printf '60|04|coreautha|com.apple.LocalAuthentication.UIAgent|1Password Touch ID\n' > "$FOCUSED_FILE"
+run_case 60
+[[ "$(cat "$COMMANDS_FILE")" == "layout:60:floating" ]]
+grep -Fq 'transient authentication window retained workspace=04 window=60' "$LOG_FILE"
+grep -Fq 'no rehome or follow' "$LOG_FILE"
+
 printf '10|04|Bear|net.shinyfrog.bear\n20|08|Todoist|com.todoist.mac.Todoist\n' > "$WINDOWS_FILE"
 printf '10|04|Bear|net.shinyfrog.bear\n' > "$FOCUSED_FILE"
 run_case 10

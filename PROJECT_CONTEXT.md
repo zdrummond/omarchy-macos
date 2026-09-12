@@ -59,8 +59,10 @@ not remembered bindings:
   display; attached external displays use slots `1` through `3`.
 - Assigned apps belong in their canonical named workspace, but automatic
   placement must not steal focus.
-- Unassigned apps must not pollute named workspaces. Launch-time rehome and its
-  follow/return behavior are guarded and logged.
+- Unassigned apps must not pollute named workspaces. Transient macOS
+  authentication UI is the narrow exception: it stays floating on the launch
+  workspace so a Touch ID prompt cannot pull the user elsewhere. Launch-time
+  rehome and its follow/return behavior are guarded and logged.
 - Startup restore must never allow a partial login layout to overwrite a
   known-good snapshot.
 - Focus changes must not warp the pointer.

@@ -100,8 +100,11 @@ manually:
 ./omarchy.sh restore-window-state
 ```
 
-1Password windows are floated so authentication dialogs stay usable on the
-current workspace. The shortcut reference remains visible on the desktop; use
+1Password windows and macOS Touch ID prompts are floated and kept on the
+workspace where they appear, so approving a fingerprint prompt does not move
+or strand you on another workspace. Rapid workspace changes and retained
+authentication prompts are recorded in `/tmp/omarchy_window_state.log` for
+diagnosis. The shortcut reference remains visible on the desktop; use
 `Left ⌥+Command+Up` for Mission Control, `Control+Tab` to cycle windows on the
 focused workspace, and `Command+Control+Tab` to cycle monitor focus.
 

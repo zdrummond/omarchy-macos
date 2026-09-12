@@ -255,8 +255,12 @@ snapshot or login-time app launch cannot crowd the message workspace.
   source workspace still contains windows, Omarchy returns to the source
   workspace. It does nothing if the user has navigated elsewhere or another
   window remains at the destination.
-- **1Password dialogs** are floated so authentication prompts stay usable on
-  the current workspace.
+- **Authentication dialogs stay on the current workspace.** 1Password windows
+  are floated, and macOS's transient Touch ID agent (`coreautha`, bundle id
+  `com.apple.LocalAuthentication.UIAgent`) is explicitly excluded from generic
+  unassigned-window rehome and follow behavior. The helper records that it
+  retained the prompt, including its launch workspace and focus context, so a
+  future authentication-related jump can be distinguished from an Omarchy move.
 - **Front app label** in bar shows `<workspace> <app name>`
 - **Right-side bar** has wifi SSID, battery level with color-coded icons, and clock
 - **Optional JankyBorders** draws a 3px mauve border on the focused window, surface0 on all others when `OMARCHY_ENABLE_BORDERS=1` is set during install/refresh
@@ -276,8 +280,10 @@ snapshot or login-time app launch cannot crowd the message workspace.
   workspace. Each assigned-window callback records the detected window id,
   source and target workspaces, app identity/title, and focused window before
   and after the move. Every focused-workspace change also records its previous
-  and new workspace and the resulting focused window, so an unsolicited focus
-  change can be correlated and attributed without reproducing it. Omarchy's
+  and new workspace, focused monitor, resulting focused window, and elapsed
+  time since the prior transition. Changes within two seconds are marked rapid
+  and include the preceding transition, so an unsolicited focus burst can be
+  correlated and attributed without reproducing it. Omarchy's
   shared window-state diagnostic log rotates daily and retains only the current
   log plus one previous-day archive; installing this policy drops older legacy
   entries.

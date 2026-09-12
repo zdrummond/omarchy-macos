@@ -44,7 +44,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
   die "missing focused-workspace audit callback\n"
     unless $source =~ /exec-on-workspace-change = \['\''\/bin\/bash'\'', '\''-c'\'', '\''~\/\.config\/aerospace\/workspace_change_log\.sh "(?:\\)?\$AEROSPACE_PREV_WORKSPACE" "(?:\\)?\$AEROSPACE_FOCUSED_WORKSPACE"'\''\]/ &&
-           $source =~ /workspace focus changed from=%s to=%s focused_window=%s/;
+           $source =~ /workspace focus changed from=%s to=%s rapid=%s delta_ms=%s prior=%s focused_monitor=%s focused_window=%s/;
 
   my ($assigned_helper) = $source =~ /<< '\''ASSIGNED_WINDOW_REHOME_EOF'\''\n(.*?)\nASSIGNED_WINDOW_REHOME_EOF/s;
   die "assigned app helper must log focus context without activating a workspace\n"
@@ -60,6 +60,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
   die "missing final unassigned app launch rehome callback\n"
     unless $source =~ /\[\[on-window-detected\]\]\nif = '\''true'\''\nrun = '\''exec-and-forget ~\/\.config\/aerospace\/unassigned_window_rehome\.sh "(?:\\)?\$AEROSPACE_WINDOW_ID"'\''/;
+
+  die "missing floating Local Authentication callback before generic rehome\n"
+    unless $source =~ /if\.app-id = '\''com\.apple\.LocalAuthentication\.UIAgent'\''\nrun = \['\''layout floating'\''\]\ncheck-further-callbacks = true.*?if = '\''true'\''\nrun = '\''exec-and-forget ~\/\.config\/aerospace\/unassigned_window_rehome/s;
+
+  die "transient authentication UI can still enter move-and-follow rehome\n"
+    unless $source =~ /bundle_id" == "com\.apple\.LocalAuthentication\.UIAgent".*?transient authentication window retained.*?no rehome or follow.*?exit 0/s;
 
   die "unassigned rehome must target the detected window instead of current focus\n"
     unless $source =~ /target_window_id="\$\{1:-\$\{AEROSPACE_WINDOW_ID:-\}\}"/ &&

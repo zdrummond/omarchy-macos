@@ -1366,10 +1366,16 @@ check-further-callbacks = true
 
 # Keep authentication prompts and password dialogs visible on the current
 # workspace. AeroSpace cannot force true "always on top", but floating and
-# avoiding fallback rehoming prevents these dialogs from blinking away to 00.
+# avoiding fallback rehoming prevents these dialogs from blinking away to an
+# unnamed workspace.
 [[on-window-detected]]
 if.app-name-regex-substring = '1Password'
 run = ['layout floating']
+
+[[on-window-detected]]
+if.app-id = 'com.apple.LocalAuthentication.UIAgent'
+run = ['layout floating']
+check-further-callbacks = true
 
 [[on-window-detected]]
 if = 'true'
@@ -1893,12 +1899,45 @@ previous="${1:-unknown}"
 focused_workspace="${2:-unknown}"
 LOG_FILE="${OMARCHY_WINDOW_STATE_LOG:-/tmp/omarchy_window_state.log}"
 OMARCHY_AEROSPACE_BIN="${OMARCHY_AEROSPACE_BIN:-aerospace}"
+STATE_FILE="${OMARCHY_WORKSPACE_CHANGE_STATE:-${TMPDIR:-/tmp}/omarchy_workspace_change_last}"
+
+now_ms=$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%.0f", time * 1000' 2>/dev/null || true)
+if [[ ! "$now_ms" =~ ^[0-9]+$ ]]; then
+  now_ms=$(($(date '+%s') * 1000))
+fi
+
+last_ms=""
+last_previous=""
+last_focused=""
+if [[ -f "$STATE_FILE" ]]; then
+  IFS='|' read -r last_ms last_previous last_focused < "$STATE_FILE" || true
+fi
+
+rapid="no"
+delta_ms="unknown"
+prior_transition="none"
+if [[ "$last_ms" =~ ^[0-9]+$ && "$now_ms" -ge "$last_ms" ]]; then
+  delta_ms=$((now_ms - last_ms))
+  prior_transition="${last_previous:-unknown}->${last_focused:-unknown}"
+  if [[ "$delta_ms" -le 2000 ]]; then
+    rapid="yes"
+  fi
+fi
+
+state_tmp=$(mktemp "${STATE_FILE}.XXXXXX" 2>/dev/null || true)
+if [[ -n "$state_tmp" ]]; then
+  printf '%s|%s|%s\n' "$now_ms" "$previous" "$focused_workspace" > "$state_tmp"
+  mv "$state_tmp" "$STATE_FILE" 2>/dev/null || rm -f "$state_tmp"
+fi
 
 focused_window=$("$OMARCHY_AEROSPACE_BIN" list-windows --focused \
   --format '%{window-id}|%{workspace}|%{app-name}|%{app-bundle-id}|%{window-title}' 2>/dev/null |
   head -n 1) || true
-printf '[%s] workspace focus changed from=%s to=%s focused_window=%s\n' \
-  "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$previous" "$focused_workspace" "${focused_window:-none}" \
+focused_monitor=$("$OMARCHY_AEROSPACE_BIN" list-monitors --focused \
+  --format '%{monitor-id}' 2>/dev/null | head -n 1) || true
+printf '[%s] workspace focus changed from=%s to=%s rapid=%s delta_ms=%s prior=%s focused_monitor=%s focused_window=%s\n' \
+  "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$previous" "$focused_workspace" "$rapid" "$delta_ms" \
+  "$prior_transition" "${focused_monitor:-unknown}" "${focused_window:-none}" \
   >> "$LOG_FILE" 2>/dev/null || true
 WORKSPACE_CHANGE_LOG_EOF
 
@@ -2010,11 +2049,27 @@ target_window_id="${1:-${AEROSPACE_WINDOW_ID:-}}"
 # The callback runs asynchronously. Focus may have changed by the time this
 # helper starts, so identify the detected window by the callback's window id
 # instead of consulting the currently focused window.
-row=$("$OMARCHY_AEROSPACE_BIN" list-windows --all --format '%{window-id}|%{workspace}|%{app-name}|%{app-bundle-id}' 2>/dev/null \
+row=$("$OMARCHY_AEROSPACE_BIN" list-windows --all --format '%{window-id}|%{workspace}|%{app-name}|%{app-bundle-id}|%{window-title}' 2>/dev/null \
   | awk -F'|' -v id="$target_window_id" '$1 == id { print; exit }') || exit 0
-IFS='|' read -r window_id workspace app_name bundle_id <<< "$row"
+IFS='|' read -r window_id workspace app_name bundle_id title <<< "$row"
 [[ "$window_id" =~ ^[0-9]+$ ]] || exit 0
 [ -n "$workspace" ] || exit 0
+
+# macOS presents Touch ID requests from password managers through this separate
+# transient UI agent. It must remain on the workspace where it appeared; moving
+# and following it strands the user on an otherwise unrelated workspace after
+# the short-lived prompt closes.
+if [[ "$bundle_id" == "com.apple.LocalAuthentication.UIAgent" || "$app_name" == "coreautha" ]]; then
+  focused_before=$("$OMARCHY_AEROSPACE_BIN" list-windows --focused \
+    --format '%{window-id}|%{workspace}|%{app-name}|%{app-bundle-id}|%{window-title}' 2>/dev/null |
+    head -n 1) || true
+  if "$OMARCHY_AEROSPACE_BIN" layout --window-id "$window_id" floating >/dev/null 2>&1; then
+    log_msg "transient authentication window retained workspace=$workspace window=$window_id app=$app_name bundle=$bundle_id title=$title focused=${focused_before:-none}; no rehome or follow"
+  else
+    log_msg "transient authentication window retained but float failed workspace=$workspace window=$window_id app=$app_name bundle=$bundle_id title=$title focused=${focused_before:-none}; no rehome or follow"
+  fi
+  exit 0
+fi
 
 assigned=$(omarchy_assigned_workspace_for_app "$app_name" "$bundle_id" 2>/dev/null || true)
 if [ -n "$assigned" ]; then
