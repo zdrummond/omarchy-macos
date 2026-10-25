@@ -15,77 +15,79 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   die "missing skhd no-follow generation\n"
     unless $source =~ /write_binding "lalt \+ shift \+ ctrl - \$key" "\$HOME\/\.config\/aerospace\/goto_space\.sh \$key --move"/;
 
+  # App assignments live in one shell table used by new-window placement.
   my @assignments = (
-    ["com.apple.mail", "01"],
-    ["com.google.Chrome.app.fmgjjmmmlfnkbppncabfkddbjimcfncm", "01"],
-    ["Messages", "02"],
-    ["Signal", "02"],
-    ["Google Chat", "02"],
-    ["Spotify|Music", "03"],
-    ["Ghostty|WezTerm|Warp|iTerm2", "04"],
-    ["Zed|Antigravity", "05"],
-    ["com.anthropic.claudefordesktop", "06"],
-    ["com.google.GeminiMacOS", "06"],
-    ["com.openai.chat", "06"],
-    ["ChatGPT", "06"],
+    [q{*Mail*|*Gmail*}, "01"],
+    [q{*Messages*|*Signal*|*Google\ Chat*}, "02"],
+    [q{*Spotify*|*Music*}, "03"],
+    [q{*Ghostty*|*WezTerm*|*Warp*|*iTerm2*}, "04"],
+    [q{*Zed*|*Antigravity*}, "05"],
+    [q{*ChatGPT*}, "06"],
   );
-
   for my $assignment (@assignments) {
-    my ($matcher, $workspace) = @$assignment;
-    my $quoted = quotemeta($matcher);
-    my $app_id = qr/if\.app-id = '\''$quoted'\''\nrun = '\''exec-and-forget ~\/\.config\/aerospace\/assigned_window_rehome\.sh $workspace "(?:\\)?\$AEROSPACE_WINDOW_ID"'\''\ncheck-further-callbacks = true/;
-    my $app_name = qr/if\.app-name-regex-substring = '\''$quoted'\''\nrun = '\''exec-and-forget ~\/\.config\/aerospace\/assigned_window_rehome\.sh $workspace "(?:\\)?\$AEROSPACE_WINDOW_ID"'\''\ncheck-further-callbacks = true/;
-    die "missing app assignment for $matcher -> $workspace\n"
-      unless $source =~ $app_id || $source =~ $app_name;
+    my ($pattern, $workspace) = @$assignment;
+    my $quoted = quotemeta($pattern);
+    die "missing app assignment for $pattern -> $workspace\n"
+      unless $source =~ /$quoted\) printf '\''$workspace\\n'\''; return 0 ;;/;
   }
+  die "missing bundle assignments for agent apps\n"
+    unless $source =~ /com\.anthropic\.claudefordesktop\|com\.google\.GeminiMacOS\|com\.openai\.chat\)\n\s*printf '\''06\\n'\''/;
 
-  die "assigned app detection must not activate its destination workspace\n"
-    if $source =~ /run = \['\''move-node-to-workspace \d\d'\'', '\''workspace \d\d'\''\]/;
+  die "per-app window-detected rules must not run their own placement\n"
+    if $source =~ /run = '\''exec-and-forget [^'\'']*(?:assigned_window_rehome|unassigned_window_rehome)/ ||
+       $source =~ /run = \['\''move-node-to-workspace \d\d'\''/;
 
   die "missing focused-workspace audit callback\n"
     unless $source =~ /exec-on-workspace-change = \['\''\/bin\/bash'\'', '\''-c'\'', '\''~\/\.config\/aerospace\/workspace_change_log\.sh "(?:\\)?\$AEROSPACE_PREV_WORKSPACE" "(?:\\)?\$AEROSPACE_FOCUSED_WORKSPACE"'\''\]/ &&
            $source =~ /workspace focus changed from=%s to=%s rapid=%s delta_ms=%s prior=%s focused_monitor=%s focused_window=%s/;
 
-  my ($assigned_helper) = $source =~ /<< '\''ASSIGNED_WINDOW_REHOME_EOF'\''\n(.*?)\nASSIGNED_WINDOW_REHOME_EOF/s;
-  die "assigned app helper must log focus context without activating a workspace\n"
-    unless defined($assigned_helper) &&
-           $assigned_helper =~ /assigned window moved window=.*focused_before=.*focused_after=.*no workspace activation/ &&
-           $assigned_helper !~ /\b(?:aerospace|"\$OMARCHY_AEROSPACE_BIN") workspace\b/;
-
   die "window-detected saver callback must keep checking further callbacks\n"
     unless $source =~ /\[\[on-window-detected\]\]\nrun = '\''exec-and-forget ~\/\.config\/aerospace\/window_state_debounced_save\.sh window-detected'\''\ncheck-further-callbacks = true/;
 
-  die "responsive layout must not run before assignment/rehome settles\n"
+  die "responsive layout must not run before placement settles\n"
     if $source =~ /responsive_layout\.sh window-detected'\''/;
 
-  die "missing final unassigned app launch rehome callback\n"
-    unless $source =~ /\[\[on-window-detected\]\]\nif = '\''true'\''\nrun = '\''exec-and-forget ~\/\.config\/aerospace\/unassigned_window_rehome\.sh "(?:\\)?\$AEROSPACE_WINDOW_ID"'\''/;
+  my @placement_callbacks = $source =~ /new_window_placement\.sh "(?:\\)?\$AEROSPACE_WINDOW_ID"/g;
+  die "exactly one catch-all new-window placement callback expected\n"
+    unless @placement_callbacks == 1 &&
+           $source =~ /\[\[on-window-detected\]\]\nif\.during-aerospace-startup = false\nrun = '\''exec-and-forget ~\/\.config\/aerospace\/new_window_placement\.sh "(?:\\)?\$AEROSPACE_WINDOW_ID"'\''/;
 
-  die "missing floating Local Authentication callback before generic rehome\n"
-    unless $source =~ /if\.app-id = '\''com\.apple\.LocalAuthentication\.UIAgent'\''\nrun = \['\''layout floating'\''\]\ncheck-further-callbacks = true.*?if = '\''true'\''\nrun = '\''exec-and-forget ~\/\.config\/aerospace\/unassigned_window_rehome/s;
+  die "missing floating Local Authentication callback before generic placement\n"
+    unless $source =~ /if\.app-id = '\''com\.apple\.LocalAuthentication\.UIAgent'\''\nrun = \['\''layout floating'\''\]\ncheck-further-callbacks = true.*?if\.during-aerospace-startup = false\nrun = '\''exec-and-forget ~\/\.config\/aerospace\/new_window_placement/s;
 
-  die "transient authentication UI can still enter move-and-follow rehome\n"
-    unless $source =~ /bundle_id" == "com\.apple\.LocalAuthentication\.UIAgent".*?transient authentication window retained.*?no rehome or follow.*?exit 0/s;
+  my ($placement) = $source =~ /<< '\''NEW_WINDOW_PLACEMENT_EOF'\''\n(.*?)\nNEW_WINDOW_PLACEMENT_EOF/s;
+  die "missing new-window placement helper\n" unless defined $placement;
 
-  die "unassigned rehome must target the detected window instead of current focus\n"
-    unless $source =~ /target_window_id="\$\{1:-\$\{AEROSPACE_WINDOW_ID:-\}\}"/ &&
-           $source !~ /list-windows --focused --format '\''%\{window-id\}\|%\{workspace\}\|%\{app-name\}\|%\{app-bundle-id\}'\''/;
+  die "transient authentication UI can still enter launch placement\n"
+    unless $placement =~ /bundle_id" == "com\.apple\.LocalAuthentication\.UIAgent".*?transient authentication window retained.*?no rehome or follow.*?exit 0/s;
 
-  die "automatic follow must remain disabled\n"
-    if $source =~ /follow_rehomed_window\(\)/ || $source =~ /"\$CLOSE_WATCHER" "\$window_id"/;
+  die "placement must target the detected window instead of current focus\n"
+    unless $placement =~ /target_window_id="\$\{1:-\$\{AEROSPACE_WINDOW_ID:-\}\}"/;
+
+  # The only focus change is the launch move itself, in one AeroSpace command.
+  my @follows = $placement =~ /--focus-follows-window/g;
+  die "launch placement must follow with exactly one move-and-follow command\n"
+    unless @follows == 1 &&
+           $placement =~ /move-node-to-workspace --window-id "\$window_id" --focus-follows-window "\$target"/;
+  die "placement must not issue separate workspace or focus commands\n"
+    if $placement =~ /"\$OMARCHY_AEROSPACE_BIN" (?:workspace|focus)\b/;
+
+  die "placement must leave floating dialogs and background apps in place\n"
+    unless $placement =~ /if \[ "\$layout" = "floating" \]; then/ &&
+           $placement =~ /\[ "\$front" != "\$bundle_id\|\$workspace" \]/;
 
   die "settled responsive layout must target the detected window id\n"
-    unless $source =~ /check_responsive_layout\(\).*?responsive_layout\.sh" "\$reason" "\$window_id"/s &&
+    unless $placement =~ /check_responsive_layout\(\) \{\n\s*"\$HOME\/\.config\/aerospace\/responsive_layout\.sh" "\$1" "\$window_id"/ &&
            $source =~ /layout --window-id "\$TARGET_WINDOW_ID" accordion horizontal vertical/;
 
-  die "Apple TV must stay unassigned and use generic launch rehome\n"
+  die "Apple TV must stay unassigned and use generic launch placement\n"
     if $source =~ /if\.app-id = '\''com\.apple\.TV'\''\nrun = \['\''move-node-to-workspace /;
 
   die "Steam must stay unassigned because key 0 is fallback, not named\n"
     if $source =~ /if\.app-name-regex-substring = '\''Steam'\''\nrun = \['\''move-node-to-workspace /;
 
-  die "unassigned rehome should use named workspace helper, not hard-coded named keys\n"
-    unless $source =~ /if ! omarchy_is_named_workspace "\$workspace"; then/;
+  die "unassigned placement should use named workspace helper, not hard-coded named keys\n"
+    unless $placement =~ /elif ! omarchy_is_named_workspace "\$workspace"; then/;
 
   die "move helper no longer calls aerospace move-node-to-workspace target\n"
     unless $source =~ /case "\$ACTION" in.*?--move-follow\).*?aerospace move-node-to-workspace "\$TARGET".*?--move\).*?aerospace move-node-to-workspace "\$TARGET"/s;

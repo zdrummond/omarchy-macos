@@ -86,13 +86,9 @@ split width falls below 640 points per window.
 Raycast's own global Option-Space shortcut must be disabled so skhd is the only
 owner of L⌥ + Space.
 
-The existing macOS **New Chrome Window** service uses **Option + Command + =**
-on this machine. Refresh connects its known Automator action to guarded launch
-follow without changing the shortcut or adding an skhd binding. With the
-broker enabled, it can follow one newly created ordinary Chrome window, subject
-to the same focus/navigation checks as a Dock launch. Missing permission or a
-declined request leaves normal no-follow placement in effect. This integration
-does not install the service or shortcut on machines where it is absent.
+The existing macOS **New Chrome Window** service (**Option + Command + =** on
+this machine) is left as macOS owns it. Its new window follows the same launch
+placement as any other app launch.
 
 ## macOS Extensions
 

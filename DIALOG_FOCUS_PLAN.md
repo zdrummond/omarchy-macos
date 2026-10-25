@@ -1,5 +1,11 @@
 # Dialog and focus protection plan
 
+> **Superseded 2026-10-25.** The Dock launch broker, Chrome service
+> integration, and legacy Chrome rehome helper described below were removed.
+> New-window follow is now the single launch-placement rule in `SPEC.md`
+> ("Launch placement protects named spaces and follows launches"). This file
+> is kept as the incident and investigation history.
+
 Status: broader dialog protection is planned, not implemented. The October 9
 incident fix exempts known Steam toasts at detection and removes all automatic
 rehome follow/close-return commands. General classification remains pending.

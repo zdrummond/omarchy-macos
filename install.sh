@@ -61,6 +61,7 @@ CONTROL_WORD_BIN="$CONTROL_WORD_APP/Contents/MacOS/control_word_navigation"
 CONTROL_WORD_PLIST="$HOME/Library/LaunchAgents/$CONTROL_WORD_LABEL.plist"
 CONTROL_WORD_ENABLED_MARKER="$BACKUP_DIR/.control-word-navigation-enabled"
 CONTROL_WORD_CANARY_MARKER="$BACKUP_DIR/control-word-navigation-canary.sha256"
+# Retired launch helpers; remove_retired_launch_helpers deletes them.
 DOCK_LAUNCH_APP="$HOME/Applications/Omarchy Dock Launch.app"
 DOCK_LAUNCH_BIN="$DOCK_LAUNCH_APP/Contents/MacOS/dock_launch_follow"
 DOCK_LAUNCH_LABEL="com.omarchy-macos.dock-launch"
@@ -88,9 +89,8 @@ WINDOW_STATE_SAVER="$AEROSPACE_DIR/window_state_saver.sh"
 WINDOW_STATE_DEBOUNCED_SAVER="$AEROSPACE_DIR/window_state_debounced_save.sh"
 WINDOW_STATE_MONITOR_MOVE_HELPER="$AEROSPACE_DIR/move_node_to_monitor_and_save.sh"
 RESPONSIVE_LAYOUT_HELPER="$AEROSPACE_DIR/responsive_layout.sh"
-ASSIGNED_WINDOW_REHOME_HELPER="$AEROSPACE_DIR/assigned_window_rehome.sh"
+NEW_WINDOW_PLACEMENT_HELPER="$AEROSPACE_DIR/new_window_placement.sh"
 WORKSPACE_CHANGE_LOG_HELPER="$AEROSPACE_DIR/workspace_change_log.sh"
-REHOMED_WINDOW_CLOSE_WATCHER="$AEROSPACE_DIR/rehomed_window_close_watch.sh"
 MONITOR_FRAME_SRC="$AEROSPACE_DIR/monitor_frame.swift"
 MONITOR_FRAME_BIN="$AEROSPACE_DIR/monitor_frame"
 WINDOW_STATE_SAVE_INTERVAL_SECONDS=900
@@ -137,7 +137,7 @@ cmd_install() {
   write_goto_space_helper
   write_native_input_helper
   write_control_word_navigation
-  write_dock_launch_helper
+  remove_retired_launch_helpers
   write_window_cycle_helper
   write_window_picker_helper
   write_secure_input_helper
@@ -199,7 +199,7 @@ cmd_refresh() {
   write_goto_space_helper
   write_native_input_helper
   write_control_word_navigation
-  write_dock_launch_helper
+  remove_retired_launch_helpers
   write_window_cycle_helper
   write_window_picker_helper
   write_secure_input_helper
@@ -691,14 +691,10 @@ cmd_revert() {
   rm -f "$AEROSPACE_START_PLIST"
   rm -f "$WINDOW_STATE_SAVER_PLIST"
   disable_bar_toggle_daemons
-  rm -f "$CHROME_REHOME_PLIST"
   rm -f "$SHORTCUT_WIDGET_PLIST"
   rm -f "$CONTROL_WORD_PLIST"
-  rm -f "$DOCK_LAUNCH_PLIST" "$DOCK_LAUNCH_ENABLED_MARKER"
-  rm -rf "$CHROME_REHOME_APP"
   rm -rf "$SHORTCUT_WIDGET_APP"
   rm -rf "$CONTROL_WORD_APP"
-  rm -rf "$DOCK_LAUNCH_APP"
   rm -f "$CONTROL_WORD_ENABLED_MARKER"
   rm -f "$CONTROL_WORD_CANARY_MARKER"
   success "Config files removed"
@@ -706,7 +702,7 @@ cmd_revert() {
   header "Restoring backups..."
   restore_backups
   restore_control_arrow_shortcuts
-  update_chrome_window_service revert
+  remove_retired_launch_helpers
 
   header "Uninstalling packages..."
   if [[ "$managed_borders" -eq 1 ]]; then
@@ -753,7 +749,6 @@ cmd_status() {
   check_launch_agent "$WINDOW_STATE_SAVER_LABEL"
   check_launch_agent "$SHORTCUT_WIDGET_LABEL"
   check_control_word_agent
-  cmd_dock_launch_follow dock-launch-follow status
 
   echo ""
   if [[ -x "$ACCESSIBILITY_REPORT_HELPER" ]]; then
@@ -1076,16 +1071,6 @@ start_services() {
   info "Disabling bar_toggle daemon..."
   disable_bar_toggle_daemons
 
-  # Retirement failure blocks only the replacement broker; it must not abort
-  # the remaining service startup after stop_services has already run.
-  if retire_legacy_chrome_rehome; then
-    if dock_launch_enabled_valid; then
-      dock_launch_start || warn "Dock follow failed to start; inspect dock-launch-follow status and logs"
-    fi
-  else
-    warn "Legacy Chrome helper not retired; Dock follow was not started"
-  fi
-
   info "Starting shortcut desktop widget..."
   stop_shortcut_widget
   launchctl load "$SHORTCUT_WIDGET_PLIST" 2>/dev/null || \
@@ -1096,7 +1081,6 @@ start_services() {
 
 stop_services() {
   local mode="${1:-normal}"
-  stop_dock_launch_service
   if [[ -f "$AEROSPACE_START_PLIST" ]]; then
     launchctl unload "$AEROSPACE_START_PLIST" 2>/dev/null && info "  stopped AeroSpace login starter" || true
   fi
@@ -1104,9 +1088,6 @@ stop_services() {
     launchctl unload "$WINDOW_STATE_SAVER_PLIST" 2>/dev/null && info "  stopped window state saver" || true
   fi
   disable_bar_toggle_daemons
-  if [[ -f "$CHROME_REHOME_PLIST" ]]; then
-    launchctl unload "$CHROME_REHOME_PLIST" 2>/dev/null && info "  stopped chrome_rehome" || true
-  fi
   if [[ -f "$SHORTCUT_WIDGET_PLIST" ]]; then
     stop_shortcut_widget
     info "  stopped shortcut widget"
@@ -1313,72 +1294,13 @@ outer.right      = 8
 
 [mode.native_input.binding]
 
-# ── App → workspace assignments ───────────────────────────────────────────
+# ── New-window placement ──────────────────────────────────────────────────
+# One catch-all callback decides every new window: launches move to their
+# app's assigned (or nearest empty unnamed) workspace and the view follows.
+# App assignments live in omarchy_assigned_workspace_for_app.
 
 [[on-window-detected]]
 run = 'exec-and-forget ~/.config/aerospace/window_state_debounced_save.sh window-detected'
-check-further-callbacks = true
-
-# App-assignment rules default to monitor 0's spaces ("0N"). If a second
-# monitor is attached, move the app to <monitor><N> manually after launch.
-[[on-window-detected]]
-if.app-id = 'com.apple.mail'
-run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 01 "\$AEROSPACE_WINDOW_ID"'
-check-further-callbacks = true
-
-[[on-window-detected]]
-if.app-id = 'com.google.Chrome.app.fmgjjmmmlfnkbppncabfkddbjimcfncm'
-run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 01 "\$AEROSPACE_WINDOW_ID"'
-check-further-callbacks = true
-
-[[on-window-detected]]
-if.app-name-regex-substring = 'Messages'
-run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 02 "\$AEROSPACE_WINDOW_ID"'
-check-further-callbacks = true
-
-[[on-window-detected]]
-if.app-name-regex-substring = 'Signal'
-run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 02 "\$AEROSPACE_WINDOW_ID"'
-check-further-callbacks = true
-
-[[on-window-detected]]
-if.app-name-regex-substring = 'Google Chat'
-run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 02 "\$AEROSPACE_WINDOW_ID"'
-check-further-callbacks = true
-
-[[on-window-detected]]
-if.app-name-regex-substring = 'Spotify|Music'
-run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 03 "\$AEROSPACE_WINDOW_ID"'
-check-further-callbacks = true
-
-[[on-window-detected]]
-if.app-name-regex-substring = 'Ghostty|WezTerm|Warp|iTerm2'
-run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 04 "\$AEROSPACE_WINDOW_ID"'
-check-further-callbacks = true
-
-[[on-window-detected]]
-if.app-name-regex-substring = 'Zed|Antigravity'
-run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 05 "\$AEROSPACE_WINDOW_ID"'
-check-further-callbacks = true
-
-[[on-window-detected]]
-if.app-id = 'com.anthropic.claudefordesktop'
-run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 06 "\$AEROSPACE_WINDOW_ID"'
-check-further-callbacks = true
-
-[[on-window-detected]]
-if.app-id = 'com.google.GeminiMacOS'
-run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 06 "\$AEROSPACE_WINDOW_ID"'
-check-further-callbacks = true
-
-[[on-window-detected]]
-if.app-id = 'com.openai.chat'
-run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 06 "\$AEROSPACE_WINDOW_ID"'
-check-further-callbacks = true
-
-[[on-window-detected]]
-if.app-name-regex-substring = 'ChatGPT'
-run = 'exec-and-forget ~/.config/aerospace/assigned_window_rehome.sh 06 "\$AEROSPACE_WINDOW_ID"'
 check-further-callbacks = true
 
 # Keep authentication prompts and password dialogs visible on the current
@@ -1394,9 +1316,10 @@ if.app-id = 'com.apple.LocalAuthentication.UIAgent'
 run = ['layout floating']
 check-further-callbacks = true
 
+# Windows already open when AeroSpace starts belong to startup restore.
 [[on-window-detected]]
-if = 'true'
-run = 'exec-and-forget ~/.config/aerospace/unassigned_window_rehome.sh "\$AEROSPACE_WINDOW_ID"'
+if.during-aerospace-startup = false
+run = 'exec-and-forget ~/.config/aerospace/new_window_placement.sh "\$AEROSPACE_WINDOW_ID"'
 
 # [[on-window-detected]]
 # if.app-name-regex-substring = 'slack|discord'
@@ -1862,73 +1785,6 @@ SPACE_STATE_EOF
 
   chmod +x "$AEROSPACE_DIR/omarchy_space_state.sh"
 
-  cat > "$ASSIGNED_WINDOW_REHOME_HELPER" << 'ASSIGNED_WINDOW_REHOME_EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-target="${1:-}"
-window_id="${2:-${AEROSPACE_WINDOW_ID:-}}"
-LOG_FILE="${OMARCHY_WINDOW_STATE_LOG:-/tmp/omarchy_window_state.log}"
-OMARCHY_AEROSPACE_BIN="${OMARCHY_AEROSPACE_BIN:-aerospace}"
-
-log_msg() {
-  printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >> "$LOG_FILE" 2>/dev/null || true
-}
-
-[[ "$target" =~ ^[0-9][0-9]$ ]] || exit 0
-[[ "$window_id" =~ ^[0-9]+$ ]] || exit 0
-
-detected=$("$OMARCHY_AEROSPACE_BIN" list-windows --all \
-  --format '%{window-id}|%{workspace}|%{app-name}|%{app-bundle-id}|%{window-title}' 2>/dev/null |
-  awk -F'|' -v id="$window_id" '$1 == id { print; exit }') || true
-focused=$("$OMARCHY_AEROSPACE_BIN" list-windows --focused \
-  --format '%{window-id}|%{workspace}|%{app-name}|%{app-bundle-id}|%{window-title}' 2>/dev/null |
-  head -n 1) || true
-
-if [ -z "$detected" ]; then
-  log_msg "assigned window callback could not find window=$window_id target=$target focused=${focused:-none}"
-  exit 0
-fi
-
-IFS='|' read -r _ source_workspace app_name bundle_id title <<< "$detected"
-if [ "$source_workspace" = "$target" ]; then
-  log_msg "assigned window detected window=$window_id already=$target app=$app_name bundle=$bundle_id title=$title focused_before=${focused:-none}; no workspace activation"
-  exit 0
-fi
-
-broker="$HOME/Applications/Omarchy Dock Launch.app/Contents/MacOS/dock_launch_follow"
-dock_followed=0
-if [[ -x "$broker" ]]; then
-  if "$broker" --move "$window_id" "$source_workspace" "$target" "$bundle_id" >/dev/null 2>&1; then
-    dock_followed=1
-  else
-    # A timed-out broker may already have moved the window. Never overwrite a
-    # concurrent move or retry against a vanished/stale source window.
-    current=$("$OMARCHY_AEROSPACE_BIN" list-windows --all --format '%{window-id}|%{workspace}' 2>/dev/null |
-      awk -F'|' -v id="$window_id" '$1 == id { print $2; exit }') || exit 0
-    if [[ "$current" != "$source_workspace" ]]; then
-      log_msg "Dock broker declined or timed out; skipped stale assigned rehome window=$window_id source=$source_workspace actual=${current:-gone}"
-      exit 0
-    fi
-  fi
-fi
-
-if [[ "$dock_followed" == 1 ]] || "$OMARCHY_AEROSPACE_BIN" move-node-to-workspace --window-id "$window_id" "$target" >/dev/null 2>&1; then
-  focused_after=$("$OMARCHY_AEROSPACE_BIN" list-windows --focused \
-    --format '%{window-id}|%{workspace}|%{app-name}|%{app-bundle-id}|%{window-title}' 2>/dev/null |
-    head -n 1) || true
-  if [[ "$dock_followed" == 1 ]]; then
-    log_msg "Dock-authorized assigned window moved and followed window=$window_id from=$source_workspace to=$target app=$app_name bundle=$bundle_id"
-  else
-    log_msg "assigned window moved window=$window_id from=$source_workspace to=$target app=$app_name bundle=$bundle_id title=$title focused_before=${focused:-none} focused_after=${focused_after:-none}; no workspace activation"
-  fi
-else
-  log_msg "assigned window move failed window=$window_id from=$source_workspace to=$target app=$app_name bundle=$bundle_id title=$title focused_before=${focused:-none}"
-fi
-ASSIGNED_WINDOW_REHOME_EOF
-
-  chmod +x "$ASSIGNED_WINDOW_REHOME_HELPER"
-
   cat > "$WORKSPACE_CHANGE_LOG_HELPER" << 'WORKSPACE_CHANGE_LOG_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1981,60 +1837,87 @@ WORKSPACE_CHANGE_LOG_EOF
 
   chmod +x "$WORKSPACE_CHANGE_LOG_HELPER"
 
-  cat > "$REHOMED_WINDOW_CLOSE_WATCHER" << 'REHOMED_WINDOW_CLOSE_WATCH_EOF'
+  cat > "$NEW_WINDOW_PLACEMENT_HELPER" << 'NEW_WINDOW_PLACEMENT_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Compatibility stub for old callers. Automatic placement no longer follows
-# windows, so closing one must never trigger an automatic workspace return.
-LOG_FILE="${OMARCHY_WINDOW_STATE_LOG:-/tmp/omarchy_window_state.log}"
-printf '[%s] automatic close-return disabled window=%s; no workspace change\n' \
-  "$(date '+%Y-%m-%dT%H:%M:%S%z')" "${1:-unknown}" >> "$LOG_FILE" 2>/dev/null || true
-REHOMED_WINDOW_CLOSE_WATCH_EOF
-
-  chmod +x "$REHOMED_WINDOW_CLOSE_WATCHER"
-
-  cat > "$AEROSPACE_DIR/unassigned_window_rehome.sh" << 'UNASSIGNED_WINDOW_REHOME_EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
+# One placement decision for every newly detected window. A window moves only
+# when it is a launch: its app has no older window on the workspace where it
+# appeared, and that app is frontmost there. Every launch move follows, in one
+# AeroSpace command. Anything else stays where it was created.
 source "$HOME/.config/aerospace/omarchy_space_state.sh"
 
 TMP_ROOT="${TMPDIR:-/tmp}"
 RESTORE_GUARD="${OMARCHY_WINDOW_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_restore_active}"
 STARTUP_RESTORE_GUARD="${OMARCHY_WINDOW_STARTUP_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_startup_restore_active}"
 PARTIAL_RESTORE_GUARD="${OMARCHY_WINDOW_PARTIAL_RESTORE_GUARD:-$TMP_ROOT/omarchy_window_state_restore_incomplete}"
+NATIVE_INPUT_STATE="$TMP_ROOT/omarchy_native_input_active"
+LAUNCH_STATE="${OMARCHY_LAUNCH_STATE:-$TMP_ROOT/omarchy_last_launch_placement}"
+LOCK_DIR="${OMARCHY_PLACEMENT_LOCK:-$TMP_ROOT/omarchy_window_placement.lock}"
+FRONT_WAIT_MS="${OMARCHY_FRONT_WAIT_MS:-500}"
+LAUNCH_GROUP_MS="${OMARCHY_LAUNCH_GROUP_MS:-2000}"
 LOG_FILE="${OMARCHY_WINDOW_STATE_LOG:-/tmp/omarchy_window_state.log}"
 
 log_msg() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >> "$LOG_FILE" 2>/dev/null || true
 }
 
-check_responsive_layout() {
-  local reason="$1"
-  "$HOME/.config/aerospace/responsive_layout.sh" "$reason" "$window_id" >/dev/null 2>&1 || true
+now_ms() {
+  local value
+  value=$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%.0f", time * 1000' 2>/dev/null || true)
+  [[ "$value" =~ ^[0-9]+$ ]] || value=$(($(date '+%s') * 1000))
+  printf '%s\n' "$value"
 }
 
-if [[ -e "$RESTORE_GUARD" || -e "$STARTUP_RESTORE_GUARD" || -e "$PARTIAL_RESTORE_GUARD" ]]; then
-  log_msg "restore active; skipped unassigned launch rehome"
+check_responsive_layout() {
+  "$HOME/.config/aerospace/responsive_layout.sh" "$1" "$window_id" >/dev/null 2>&1 || true
+}
+
+record_layout() {
+  "$HOME/.config/aerospace/window_state_debounced_save.sh" "$1" >/dev/null 2>&1 || true
+  check_responsive_layout "$1"
+}
+
+if [[ -e "$RESTORE_GUARD" || -e "$STARTUP_RESTORE_GUARD" || -e "$PARTIAL_RESTORE_GUARD" || -e "$NATIVE_INPUT_STATE" ]]; then
+  log_msg "restore or Native Input active; skipped new-window placement"
   exit 0
 fi
 
 target_window_id="${1:-${AEROSPACE_WINDOW_ID:-}}"
 [[ "$target_window_id" =~ ^[0-9]+$ ]] || exit 0
 
-# The callback runs asynchronously. Focus may have changed by the time this
-# helper starts, so identify the detected window by the callback's window id
-# instead of consulting the currently focused window.
-row=$("$OMARCHY_AEROSPACE_BIN" list-windows --all --format '%{window-id}|%{workspace}|%{app-name}|%{app-bundle-id}|%{window-title}' 2>/dev/null \
-  | awk -F'|' -v id="$target_window_id" '$1 == id { print; exit }') || exit 0
-IFS='|' read -r window_id workspace app_name bundle_id title <<< "$row"
+# Serialize placements so the windows of one launch, and concurrent launches,
+# observe each other's moves and never pick the same empty workspace.
+locked=0
+for ((attempt = 0; attempt < 60; attempt++)); do
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    locked=1
+    break
+  fi
+  sleep 0.05
+done
+if [ "$locked" -eq 0 ]; then
+  # A crashed placement can leave its lock behind; reclaim it once.
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    locked=1
+  else
+    log_msg "placement lock unavailable; continuing unserialized window=$target_window_id"
+  fi
+fi
+[ "$locked" -eq 0 ] || trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
+
+# The callback runs asynchronously. Identify the window by the callback's id,
+# never by whatever is focused when this helper starts.
+row=$("$OMARCHY_AEROSPACE_BIN" list-windows --all \
+  --format '%{window-id}|%{workspace}|%{app-name}|%{app-bundle-id}|%{window-layout}|%{window-title}' 2>/dev/null |
+  awk -F'|' -v id="$target_window_id" '$1 == id && !found { print; found = 1 }') || exit 0
+IFS='|' read -r window_id workspace app_name bundle_id layout title <<< "$row"
 [[ "$window_id" =~ ^[0-9]+$ ]] || exit 0
 [ -n "$workspace" ] || exit 0
 
 # This exact bundle/title family was observed stealing focus from Gmail.
 # Do not classify arbitrary Steam windows (or other apps' titles) as toasts.
-# This is a narrow launch-time exception, not a general dialog classifier.
 if [[ "$bundle_id" == "com.valvesoftware.steam.helper" && "$title" =~ ^notificationtoasts_[0-9]+_desktop$ ]]; then
   if "$OMARCHY_AEROSPACE_BIN" layout --window-id "$window_id" floating >/dev/null 2>&1; then
     log_msg "transient Steam notification retained workspace=$workspace window=$window_id; no rehome or follow"
@@ -2045,75 +1928,118 @@ if [[ "$bundle_id" == "com.valvesoftware.steam.helper" && "$title" =~ ^notificat
 fi
 
 # macOS presents Touch ID requests from password managers through this separate
-# transient UI agent. It must remain on the workspace where it appeared; moving
-# and following it strands the user on an otherwise unrelated workspace after
-# the short-lived prompt closes.
+# transient UI agent. It must remain on the workspace where it appeared.
 if [[ "$bundle_id" == "com.apple.LocalAuthentication.UIAgent" || "$app_name" == "coreautha" ]]; then
-  focused_before=$("$OMARCHY_AEROSPACE_BIN" list-windows --focused \
-    --format '%{window-id}|%{workspace}|%{app-name}|%{app-bundle-id}|%{window-title}' 2>/dev/null |
-    head -n 1) || true
   if "$OMARCHY_AEROSPACE_BIN" layout --window-id "$window_id" floating >/dev/null 2>&1; then
-    log_msg "transient authentication window retained workspace=$workspace window=$window_id app=$app_name bundle=$bundle_id title=$title focused=${focused_before:-none}; no rehome or follow"
+    log_msg "transient authentication window retained workspace=$workspace window=$window_id app=$app_name bundle=$bundle_id title=$title; no rehome or follow"
   else
-    log_msg "transient authentication window retained but float failed workspace=$workspace window=$window_id app=$app_name bundle=$bundle_id title=$title focused=${focused_before:-none}; no rehome or follow"
+    log_msg "transient authentication window retained but float failed workspace=$workspace window=$window_id app=$app_name bundle=$bundle_id title=$title; no rehome or follow"
   fi
+  exit 0
+fi
+
+# AeroSpace already floats dialogs, sheets, and popups. They stay with the app
+# window that opened them.
+if [ "$layout" = "floating" ]; then
+  log_msg "floating window stays window=$window_id workspace=$workspace app=$app_name bundle=$bundle_id; no rehome or follow"
   exit 0
 fi
 
 assigned=$(omarchy_assigned_workspace_for_app "$app_name" "$bundle_id" 2>/dev/null || true)
 if [ -n "$assigned" ]; then
-  check_responsive_layout "assigned-window-settled-$assigned"
-  exit 0
-fi
-
-if ! omarchy_is_named_workspace "$workspace"; then
+  if [ "$assigned" = "$workspace" ]; then
+    check_responsive_layout "assigned-window-settled-$assigned"
+    exit 0
+  fi
+elif ! omarchy_is_named_workspace "$workspace"; then
   check_responsive_layout "window-detected-settled-$workspace"
   exit 0
 fi
 
-windows=$("$OMARCHY_AEROSPACE_BIN" list-windows --all --format '%{window-id}|%{workspace}' 2>/dev/null) || exit 0
-target=$(omarchy_nearest_empty_unnamed_workspace "$workspace" "$windows" "$window_id" 2>/dev/null || true)
+if [ -z "$bundle_id" ]; then
+  log_msg "window without app identity stays window=$window_id workspace=$workspace app=$app_name; no rehome or follow"
+  check_responsive_layout "window-detected-settled-$workspace"
+  exit 0
+fi
+
+# Same launch: later windows from an app that was just placed join its
+# destination. The view already followed the first window there.
+if [ -f "$LAUNCH_STATE" ]; then
+  launch_ms="" launch_bundle="" launch_target=""
+  IFS='|' read -r launch_ms launch_bundle launch_target < "$LAUNCH_STATE" || true
+  now=$(now_ms)
+  if [ "$launch_bundle" = "$bundle_id" ] && [[ "$launch_ms" =~ ^[0-9]+$ ]] &&
+     [ "$now" -ge "$launch_ms" ] && [ $((now - launch_ms)) -le "$LAUNCH_GROUP_MS" ] &&
+     [[ "$launch_target" =~ ^[0-9][0-9]$ ]] && [ "$launch_target" != "$workspace" ]; then
+    if "$OMARCHY_AEROSPACE_BIN" move-node-to-workspace --window-id "$window_id" "$launch_target" >/dev/null 2>&1; then
+      log_msg "same-launch window joined window=$window_id from=$workspace to=$launch_target app=$app_name bundle=$bundle_id"
+      record_layout "launch-group-$launch_target"
+    else
+      log_msg "same-launch window move failed window=$window_id from=$workspace to=$launch_target app=$app_name bundle=$bundle_id"
+      check_responsive_layout "window-detected-move-failed-$workspace"
+    fi
+    exit 0
+  fi
+fi
+
+windows=$("$OMARCHY_AEROSPACE_BIN" list-windows --all --format '%{window-id}|%{workspace}|%{app-bundle-id}' 2>/dev/null) || exit 0
+
+# The app was already here: a new window (Cmd-N) splits next to its older
+# windows. Window ids increase, so lower ids are the windows that came first;
+# windows created alongside this one in the same launch are not counted.
+if awk -F'|' -v id="$window_id" -v ws="$workspace" -v bundle="$bundle_id" \
+  '($1 + 0) < (id + 0) && $2 == ws && $3 == bundle { found = 1 } END { exit !found }' <<< "$windows"; then
+  log_msg "app already on workspace; window stays window=$window_id workspace=$workspace app=$app_name bundle=$bundle_id; no rehome or follow"
+  check_responsive_layout "window-detected-settled-$workspace"
+  exit 0
+fi
+
+# Launch intent: the app is frontmost on the workspace where its window
+# appeared. Background apps' windows fail this check and stay put. Focus can
+# land shortly after detection, so recheck briefly.
+front_deadline=$(($(now_ms) + FRONT_WAIT_MS))
+while :; do
+  front=$("$OMARCHY_AEROSPACE_BIN" list-windows --focused --format '%{app-bundle-id}|%{workspace}' 2>/dev/null |
+    head -n 1) || true
+  [ "$front" != "$bundle_id|$workspace" ] || break
+  [ "$(now_ms)" -lt "$front_deadline" ] || break
+  sleep 0.05
+done
+if [ "$front" != "$bundle_id|$workspace" ]; then
+  log_msg "app not frontmost on its workspace; window stays window=$window_id workspace=$workspace app=$app_name bundle=$bundle_id focused=${front:-none}; no rehome or follow"
+  check_responsive_layout "window-detected-settled-$workspace"
+  exit 0
+fi
+
+if [ -n "$assigned" ]; then
+  target="$assigned"
+else
+  target=$(omarchy_nearest_empty_unnamed_workspace "$workspace" "$windows" "$window_id" 2>/dev/null || true)
+fi
 if [ -z "$target" ] || [ "$target" = "$workspace" ]; then
   check_responsive_layout "window-detected-settled-$workspace"
   exit 0
 fi
 
-broker="$HOME/Applications/Omarchy Dock Launch.app/Contents/MacOS/dock_launch_follow"
-dock_followed=0
-if [[ -x "$broker" ]]; then
-  if "$broker" --move "$window_id" "$workspace" "$target" "$bundle_id" >/dev/null 2>&1; then
-    dock_followed=1
-  else
-    # A broker timeout may occur after its move was dispatched. Do not retry a
-    # stale source or overwrite a concurrent user move; reconcile read-only.
-    current=$("$OMARCHY_AEROSPACE_BIN" list-windows --all --format '%{window-id}|%{workspace}' 2>/dev/null |
-      awk -F'|' -v id="$window_id" '$1 == id { print $2; exit }') || exit 0
-    if [[ "$current" != "$workspace" ]]; then
-      log_msg "Dock broker declined or timed out; skipped stale rehome window=$window_id source=$workspace actual=${current:-gone}"
-      if [[ "$current" == "$target" ]]; then
-        "$HOME/.config/aerospace/window_state_debounced_save.sh" "unassigned-window-rehome-$target" >/dev/null 2>&1 || true
-        check_responsive_layout "unassigned-window-rehome-$target"
-      fi
-      exit 0
-    fi
+if "$OMARCHY_AEROSPACE_BIN" move-node-to-workspace --window-id "$window_id" --focus-follows-window "$target" >/dev/null 2>&1; then
+  state_tmp=$(mktemp "${LAUNCH_STATE}.XXXXXX" 2>/dev/null || true)
+  if [ -n "$state_tmp" ]; then
+    printf '%s|%s|%s\n' "$(now_ms)" "$bundle_id" "$target" > "$state_tmp"
+    mv "$state_tmp" "$LAUNCH_STATE" 2>/dev/null || rm -f "$state_tmp"
   fi
-fi
-
-if [[ "$dock_followed" == 1 ]] || "$OMARCHY_AEROSPACE_BIN" move-node-to-workspace --window-id "$window_id" "$target" >/dev/null 2>&1; then
-  if [[ "$dock_followed" == 1 ]]; then
-    log_msg "Dock-authorized launch rehome moved and followed $window_id from $workspace to $target: $app_name / $bundle_id"
-  else
-    log_msg "unassigned launch rehome moved $window_id from $workspace to $target: $app_name / $bundle_id; automatic follow disabled"
-  fi
-  "$HOME/.config/aerospace/window_state_debounced_save.sh" "unassigned-window-rehome-$target" >/dev/null 2>&1 || true
-  check_responsive_layout "unassigned-window-rehome-$target"
+  log_msg "launch placement moved and followed window=$window_id from=$workspace to=$target app=$app_name bundle=$bundle_id"
+  record_layout "launch-placement-$target"
 else
+  log_msg "launch placement failed window=$window_id from=$workspace to=$target app=$app_name bundle=$bundle_id"
   check_responsive_layout "window-detected-move-failed-$workspace"
-  log_msg "unassigned launch rehome failed moving $window_id from $workspace to $target: $app_name / $bundle_id"
 fi
-UNASSIGNED_WINDOW_REHOME_EOF
+NEW_WINDOW_PLACEMENT_EOF
 
-  chmod +x "$AEROSPACE_DIR/unassigned_window_rehome.sh"
+  chmod +x "$NEW_WINDOW_PLACEMENT_HELPER"
+  # Earlier placement helpers are replaced by the single decision above.
+  rm -f "$AEROSPACE_DIR/assigned_window_rehome.sh" \
+    "$AEROSPACE_DIR/unassigned_window_rehome.sh" \
+    "$AEROSPACE_DIR/rehomed_window_close_watch.sh"
 
   cat > "$MONITOR_FRAME_SRC" << 'MONITOR_FRAME_SWIFT_EOF'
 import AppKit
@@ -5469,369 +5395,6 @@ WIFI_PLUGIN_EOF
 }
 
 # =============================================================================
-# CHROME REHOME DAEMON
-#
-# Swift binary that subscribes to Chrome's AXWindowCreated events and moves
-# each newly-opened ordinary Chrome window on the built-in monitor to an
-# existing Chrome workspace, or to the first empty general-purpose workspace.
-# External monitor slots are left alone. Reserved app workspaces are not empty
-# fallback targets. The updated window state is saved after the decision so
-# reboot restore learns the final placement.
-# =============================================================================
-write_chrome_rehome_daemon() {
-  info "Writing chrome_rehome daemon..."
-  mkdir -p "$SKETCHY_DIR/plugins"
-  mkdir -p "$CHROME_REHOME_APP/Contents/MacOS"
-  local source_tmp="$CHROME_REHOME_SRC.tmp"
-  local source_changed=0
-
-  cat > "$source_tmp" << 'CHROME_REHOME_SWIFT_EOF'
-import AppKit
-import ApplicationServices
-
-@_silgen_name("_AXUIElementGetWindow")
-func _AXUIElementGetWindow(_ element: AXUIElement, _ windowId: UnsafeMutablePointer<CGWindowID>) -> AXError
-
-let aerospacePath = "/opt/homebrew/bin/aerospace"
-let debouncedSavePath = NSHomeDirectory() + "/.config/aerospace/window_state_debounced_save.sh"
-let chromeBundleID = "com.google.Chrome"
-let scanOrder: [String] = ["1","2","3","4","5","6","7","8","9","0"]
-let generalWorkspaceKeys: [String] = ["7","8","9"]
-let aerospaceStartupAttempts = 60
-let windowListingAttempts = 60
-let tmpDir = ProcessInfo.processInfo.environment["TMPDIR"] ?? "/tmp"
-let restoreGuardPath = ProcessInfo.processInfo.environment["OMARCHY_WINDOW_RESTORE_GUARD"] ?? "\(tmpDir)/omarchy_window_state_restore_active"
-let startupRestoreGuardPath = ProcessInfo.processInfo.environment["OMARCHY_WINDOW_STARTUP_RESTORE_GUARD"] ?? "\(tmpDir)/omarchy_window_state_startup_restore_active"
-let partialRestoreGuardPath = ProcessInfo.processInfo.environment["OMARCHY_WINDOW_PARTIAL_RESTORE_GUARD"] ?? "\(tmpDir)/omarchy_window_state_restore_incomplete"
-
-func log(_ msg: String) {
-    let stamp = ISO8601DateFormatter().string(from: Date())
-    FileHandle.standardOutput.write(Data("[\(stamp)] \(msg)\n".utf8))
-}
-
-@discardableResult
-func sh(_ args: [String]) -> String {
-    let p = Process()
-    p.launchPath = aerospacePath
-    p.arguments = args
-    let out = Pipe()
-    p.standardOutput = out
-    p.standardError = FileHandle.nullDevice
-    do { try p.run() } catch {
-        log("aerospace launch failed: \(error)")
-        return ""
-    }
-    p.waitUntilExit()
-    return String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-}
-
-func aerospaceAvailable() -> Bool {
-    !sh(["list-monitors", "--format", "%{monitor-id}"])
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-        .isEmpty
-}
-
-func scheduleWindowStateSave(_ reason: String) {
-    guard FileManager.default.isExecutableFile(atPath: debouncedSavePath) else { return }
-    let p = Process()
-    p.launchPath = debouncedSavePath
-    p.arguments = [reason]
-    do {
-        try p.run()
-    } catch {
-        log("could not schedule window state save: \(error)")
-    }
-}
-
-func waitForAerospace() -> Bool {
-    for attempt in 0..<aerospaceStartupAttempts {
-        if aerospaceAvailable() {
-            if attempt > 0 {
-                log("AeroSpace became reachable after \(attempt) seconds")
-            }
-            return true
-        }
-        Thread.sleep(forTimeInterval: 1.0)
-    }
-    return false
-}
-
-func restoreActive() -> Bool {
-    let fm = FileManager.default
-    return fm.fileExists(atPath: restoreGuardPath)
-        || fm.fileExists(atPath: startupRestoreGuardPath)
-        || fm.fileExists(atPath: partialRestoreGuardPath)
-}
-
-func activeMonitorSlotCount() -> Int {
-    let out = sh(["list-monitors", "--format", "%{monitor-id}"])
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    return out.split(separator: "\n").count
-}
-
-struct WindowRow {
-    let id: UInt32
-    let ws: String
-    let app: String
-}
-
-func chromeWorkspaceOnMonitor(_ monitor: String, rows: [WindowRow], skip currentWs: String, newWindowId: UInt32) -> String? {
-    for key in scanOrder {
-        let ws = "\(monitor)\(key)"
-        if ws == currentWs { continue }
-        let hasChrome = rows.contains {
-            $0.ws == ws && $0.id != newWindowId && $0.app == "Google Chrome"
-        }
-        if hasChrome { return ws }
-    }
-    return nil
-}
-
-func firstEmptyGeneralWorkspaceOnMonitor(_ monitor: String, rows: [WindowRow], skip currentWs: String) -> String? {
-    for key in generalWorkspaceKeys {
-        let ws = "\(monitor)\(key)"
-        if ws == currentWs { continue }
-        let occupied = rows.contains { $0.ws == ws }
-        if !occupied { return ws }
-    }
-    return nil
-}
-
-func targetWorkspaceForChrome(monitor: String, rows: [WindowRow], currentWs: String, newWindowId: UInt32) -> String? {
-    if let chromeWs = chromeWorkspaceOnMonitor(monitor, rows: rows, skip: currentWs, newWindowId: newWindowId) {
-        return chromeWs
-    }
-    return firstEmptyGeneralWorkspaceOnMonitor(monitor, rows: rows, skip: currentWs)
-}
-
-func handleNewWindow(_ wid: CGWindowID) {
-    guard waitForAerospace() else {
-        log("Chrome window \(wid): AeroSpace was not reachable; leaving in place")
-        return
-    }
-    if restoreActive() {
-        log("Chrome window \(wid): restore is active or incomplete; leaving in place")
-        return
-    }
-
-    for attempt in 0..<windowListingAttempts {
-        let listing = sh(["list-windows", "--all", "--format", "%{window-id}|%{workspace}|%{app-name}"])
-        var currentWs: String? = nil
-        var rows: [WindowRow] = []
-        for line in listing.split(separator: "\n") {
-            let parts = line.split(separator: "|", maxSplits: 2)
-            guard parts.count == 3, let id = UInt32(parts[0]) else { continue }
-            let row = WindowRow(id: id, ws: String(parts[1]), app: String(parts[2]))
-            rows.append(row)
-            if id == wid { currentWs = row.ws }
-        }
-        guard let ws = currentWs else {
-            if attempt < windowListingAttempts - 1 { Thread.sleep(forTimeInterval: 0.5) }
-            continue
-        }
-        guard let monitor = ws.first else {
-            scheduleWindowStateSave("chrome-window-detected")
-            return
-        }
-        let monitorSlot = Int(String(monitor)) ?? 0
-        if monitorSlot != 0 {
-            log("Chrome window \(wid) on external workspace \(ws): leaving in place")
-            scheduleWindowStateSave("chrome-window-detected")
-            return
-        }
-        let siblingChromeOnWs = rows.contains {
-            $0.ws == ws && $0.id != wid && $0.app == "Google Chrome"
-        }
-        if siblingChromeOnWs {
-            log("Chrome window \(wid) on \(ws): already has Chrome here, leaving in place")
-            scheduleWindowStateSave("chrome-window-detected")
-            return
-        }
-        let activeSlotCount = activeMonitorSlotCount()
-        let targetMonitor = monitorSlot < activeSlotCount ? String(monitor) : "0"
-        if let target = targetWorkspaceForChrome(monitor: targetMonitor, rows: rows, currentWs: ws, newWindowId: wid) {
-            log("Chrome window \(wid) alone on \(ws) -> \(target)")
-            sh(["move-node-to-workspace", "--window-id", "\(wid)", target])
-            sh(["workspace", target])
-        } else {
-            log("Chrome window \(wid) alone on \(ws): no Chrome/general workspace available on monitor \(targetMonitor), leaving in place")
-        }
-        scheduleWindowStateSave("chrome-window-detected")
-        return
-    }
-    log("Chrome window \(wid) never appeared in aerospace listing")
-}
-
-let axCallback: AXObserverCallback = { _, element, _, _ in
-    var wid: CGWindowID = 0
-    if _AXUIElementGetWindow(element, &wid) == .success {
-        DispatchQueue.global().async { handleNewWindow(wid) }
-    }
-}
-
-var currentObserver: AXObserver?
-var currentPid: pid_t = 0
-
-func detachObserver() {
-    if let obs = currentObserver {
-        CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(obs), .defaultMode)
-    }
-    currentObserver = nil
-    currentPid = 0
-}
-
-@discardableResult
-func attachObserver(_ pid: pid_t) -> Bool {
-    detachObserver()
-    var observer: AXObserver?
-    let createResult = AXObserverCreate(pid, axCallback, &observer)
-    guard createResult == .success, let obs = observer else {
-        log("AXObserverCreate failed for pid \(pid): \(createResult.rawValue)")
-        return false
-    }
-    let app = AXUIElementCreateApplication(pid)
-    let addResult = AXObserverAddNotification(obs, app, kAXWindowCreatedNotification as CFString, nil)
-    if addResult != .success {
-        log("AXObserverAddNotification failed for pid \(pid): \(addResult.rawValue)")
-        return false
-    }
-    CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(obs), .defaultMode)
-    currentObserver = obs
-    currentPid = pid
-    log("attached AX observer to Chrome pid \(pid)")
-    return true
-}
-
-func chromeApp() -> NSRunningApplication? {
-    NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == chromeBundleID }
-}
-
-func trustedForAX(prompt: Bool = false) -> Bool {
-    let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-    return AXIsProcessTrustedWithOptions([promptKey: prompt] as CFDictionary)
-}
-
-func attachChromeIfPossible(prompt: Bool = false) {
-    guard currentObserver == nil else { return }
-    let trusted = trustedForAX(prompt: prompt)
-    log("AXIsProcessTrusted: \(trusted)")
-    guard trusted else { return }
-    guard let app = chromeApp() else { return }
-    _ = attachObserver(app.processIdentifier)
-}
-
-attachChromeIfPossible(prompt: true)
-
-Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
-    attachChromeIfPossible()
-}
-
-NSWorkspace.shared.notificationCenter.addObserver(
-    forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: nil
-) { notif in
-    if let app = notif.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-       app.bundleIdentifier == chromeBundleID {
-        if trustedForAX(prompt: true) {
-            _ = attachObserver(app.processIdentifier)
-        } else {
-            log("Chrome launched, but chrome_rehome is not Accessibility-trusted")
-        }
-    }
-}
-
-NSWorkspace.shared.notificationCenter.addObserver(
-    forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: nil
-) { notif in
-    if let app = notif.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-       app.processIdentifier == currentPid {
-        log("Chrome terminated, detaching observer")
-        detachObserver()
-    }
-}
-
-log("chrome_rehome started")
-RunLoop.main.run()
-CHROME_REHOME_SWIFT_EOF
-
-  if [[ -f "$CHROME_REHOME_SRC" ]] && cmp -s "$source_tmp" "$CHROME_REHOME_SRC"; then
-    rm -f "$source_tmp"
-  else
-    mv "$source_tmp" "$CHROME_REHOME_SRC"
-    source_changed=1
-  fi
-
-  if ! command -v swiftc &>/dev/null; then
-    warn "swiftc not found — install Xcode Command Line Tools (xcode-select --install)"
-    return 1
-  fi
-
-  if [[ "$source_changed" -eq 1 || ! -x "$CHROME_REHOME_BIN" ]]; then
-    info "Compiling chrome_rehome..."
-    swiftc -O "$CHROME_REHOME_SRC" -o "$CHROME_REHOME_BIN"
-    chmod +x "$CHROME_REHOME_BIN"
-  else
-    info "chrome_rehome source unchanged; keeping existing binary for Accessibility trust"
-  fi
-  cat > "$CHROME_REHOME_APP/Contents/Info.plist" << CHROME_REHOME_INFO_PLIST_EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleExecutable</key>
-  <string>chrome_rehome</string>
-  <key>CFBundleIdentifier</key>
-  <string>$CHROME_REHOME_LABEL</string>
-  <key>CFBundleName</key>
-  <string>Omarchy Chrome Rehome</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>CFBundleShortVersionString</key>
-  <string>1.0</string>
-  <key>CFBundleVersion</key>
-  <string>1</string>
-  <key>LSBackgroundOnly</key>
-  <true/>
-  <key>NSPrincipalClass</key>
-  <string>NSApplication</string>
-</dict>
-</plist>
-CHROME_REHOME_INFO_PLIST_EOF
-
-  if [[ "$source_changed" -eq 1 ]] || ! /usr/bin/codesign --verify "$CHROME_REHOME_APP" >/dev/null 2>&1; then
-    /usr/bin/codesign --force --sign - --identifier "$CHROME_REHOME_LABEL" "$CHROME_REHOME_APP" >/dev/null 2>&1 || \
-      warn "Could not ad-hoc sign $CHROME_REHOME_APP"
-  fi
-  xattr -dr com.apple.quarantine "$CHROME_REHOME_APP" 2>/dev/null || true
-  xattr -dr com.apple.provenance "$CHROME_REHOME_APP" 2>/dev/null || true
-
-  mkdir -p "$HOME/Library/LaunchAgents"
-  cat > "$CHROME_REHOME_PLIST" << CHROME_REHOME_PLIST_EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>$CHROME_REHOME_LABEL</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>$CHROME_REHOME_BIN</string>
-  </array>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>/tmp/chrome_rehome.log</string>
-  <key>StandardErrorPath</key>
-  <string>/tmp/chrome_rehome.log</string>
-</dict>
-</plist>
-CHROME_REHOME_PLIST_EOF
-
-  success "chrome_rehome daemon written"
-}
-
-# =============================================================================
 # JANKYBORDERS CONFIG
 # =============================================================================
 write_borders_config_if_enabled() {
@@ -6020,256 +5583,50 @@ cmd_control_word_navigation() {
 }
 
 # =============================================================================
-# GUARDED DOCK LAUNCH FOLLOW
-# New installs are disabled; explicit authorization survives unchanged refreshes.
+# RETIRED LAUNCH HELPERS
+# New-window follow is decided entirely by new_window_placement.sh. The legacy
+# Chrome rehome daemon and the Dock launch broker are stopped and removed.
 # =============================================================================
-retire_legacy_chrome_rehome() {
-  local service="gui/$(id -u)/$CHROME_REHOME_LABEL" retired
-  launchctl disable "$service" || { error "Could not disable retired Chrome helper"; return 1; }
-  if launchctl print "$service" >/dev/null 2>&1; then
-    launchctl bootout "$service" || { error "Could not stop retired Chrome helper"; return 1; }
-  fi
-  if launchctl print "$service" >/dev/null 2>&1; then
-    error "Retired Chrome helper is still loaded; refusing replacement startup"
-    return 1
-  fi
-  if [[ -f "$CHROME_REHOME_PLIST" ]]; then
-    # Callers use this in conditional context, where set -e is suppressed;
-    # check each step so a failed move is never reported as retirement.
-    if ! mkdir -p "$BACKUP_DIR/retired-launchagents" ||
-       ! retired=$(mktemp "$BACKUP_DIR/retired-launchagents/chrome_rehome.XXXXXX") ||
-       ! mv "$CHROME_REHOME_PLIST" "$retired"; then
-      error "Could not move retired Chrome LaunchAgent out of auto-start"
-      return 1
-    fi
-    info "Retired Chrome LaunchAgent moved out of auto-start to $retired"
-  fi
-}
-
-stop_dock_launch_service() {
+remove_retired_launch_helpers() {
+  local uid label
+  uid=$(id -u)
   if [[ -x "$DOCK_LAUNCH_BIN" ]]; then "$DOCK_LAUNCH_BIN" --stop >/dev/null 2>&1 || true; fi
-  launchctl bootout "gui/$(id -u)/$DOCK_LAUNCH_LABEL" >/dev/null 2>&1 || true
+  for label in "$CHROME_REHOME_LABEL" "$DOCK_LAUNCH_LABEL"; do
+    launchctl bootout "gui/$uid/$label" >/dev/null 2>&1 || true
+  done
+  rm -f "$CHROME_REHOME_PLIST" "$CHROME_REHOME_SRC" \
+    "$DOCK_LAUNCH_PLIST" "$DOCK_LAUNCH_ENABLED_MARKER" "$AEROSPACE_DIR/dock_launch_follow.swift"
+  rm -rf "$CHROME_REHOME_APP" "$DOCK_LAUNCH_APP"
+  restore_chrome_window_service
 }
 
-dock_launch_digest() {
-  [[ -x "$DOCK_LAUNCH_BIN" ]] || return 1
-  /usr/bin/shasum -a 256 "$DOCK_LAUNCH_BIN" | awk '{print $1}'
-}
-
-dock_launch_enabled_valid() {
-  local recorded actual
-  [[ -f "$DOCK_LAUNCH_ENABLED_MARKER" ]] || return 1
-  recorded=$(head -n 1 "$DOCK_LAUNCH_ENABLED_MARKER")
-  [[ "$recorded" =~ ^[[:xdigit:]]{64}$ ]] || return 1
-  actual=$(dock_launch_digest) || return 1
-  [[ "$actual" == "$recorded" ]]
-}
-
-dock_launch_service_healthy() {
-  local details state pid reply
-  details=$(launchctl print "gui/$(id -u)/$DOCK_LAUNCH_LABEL" 2>/dev/null) || return 1
-  state=$(awk -F'= ' '/^[[:space:]]*state = / {print $2; exit}' <<< "$details")
-  pid=$(awk -F'= ' '/^[[:space:]]*pid = / {print $2; exit}' <<< "$details")
-  [[ "$state" == running && "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
-  reply=$("$DOCK_LAUNCH_BIN" --status 2>/dev/null) || return 1
-  [[ "$reply" == "dock-launch: running mode=service pid=$pid" ]]
-}
-
-dock_launch_start() {
-  local attempt
-  dock_launch_enabled_valid || { error "Dock follow needs explicit enable for this binary"; return 1; }
-  stop_dock_launch_service
-  if launchctl enable "gui/$(id -u)/$DOCK_LAUNCH_LABEL" &&
-     launchctl bootstrap "gui/$(id -u)" "$DOCK_LAUNCH_PLIST"; then
-    for ((attempt=0; attempt<${OMARCHY_DOCK_START_ATTEMPTS:-40}; attempt++)); do
-      if dock_launch_service_healthy; then
-        success "Dock follow enabled and running persistently"
-        return 0
-      fi
-      sleep "${OMARCHY_DOCK_START_DELAY:-0.1}"
-    done
-  fi
-  rm -f "$DOCK_LAUNCH_ENABLED_MARKER"
-  stop_dock_launch_service
-  launchctl disable "gui/$(id -u)/$DOCK_LAUNCH_LABEL" >/dev/null 2>&1 || true
-  error "Dock follow did not become ready; enablement rolled back. Check Accessibility and $WINDOW_STATE_LOG"
-  return 1
-}
-
-write_dock_launch_helper() {
-  local repo_root="${OMARCHY_SOURCE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
-  local source_file="$repo_root/helpers/dock_launch_follow.swift"
-  local installed_source="$AEROSPACE_DIR/dock_launch_follow.swift"
-  local changed=0
-  mkdir -p "$AEROSPACE_DIR" "$DOCK_LAUNCH_APP/Contents/MacOS" "$(dirname "$DOCK_LAUNCH_PLIST")"
-  if [[ ! -f "$source_file" ]]; then
-    error "Missing repository helper source: $source_file"
-    return 1
-  fi
-  if [[ ! -x "$DOCK_LAUNCH_BIN" ]] || ! cmp -s "$source_file" "$installed_source"; then
-    if [[ -x "$DOCK_LAUNCH_BIN" ]]; then stop_dock_launch_service; fi
-    rm -f "$DOCK_LAUNCH_ENABLED_MARKER"
-    local binary_tmp="$DOCK_LAUNCH_BIN.build"
-    # The broker is opt-in: a build failure leaves Dock follow disabled but
-    # must not abort the rest of install/refresh under set -e.
-    if ! swiftc -O "$source_file" -o "$binary_tmp"; then
-      rm -f "$binary_tmp"
-      warn "Could not build Dock launch helper; Dock follow remains disabled"
-      return 0
-    fi
-    mv "$binary_tmp" "$DOCK_LAUNCH_BIN"
-    cp "$source_file" "$installed_source"
-    changed=1
-  fi
-  cat > "$DOCK_LAUNCH_APP/Contents/Info.plist" << 'DOCK_LAUNCH_INFO_EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>dock_launch_follow</string>
-<key>CFBundleIdentifier</key><string>com.omarchy-macos.dock-launch</string>
-<key>CFBundleName</key><string>Omarchy Dock Launch</string>
-<key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleVersion</key><string>1</string>
-<key>LSUIElement</key><true/>
-</dict></plist>
-DOCK_LAUNCH_INFO_EOF
-  if [[ "$changed" == 1 ]] || ! /usr/bin/codesign --verify "$DOCK_LAUNCH_APP" >/dev/null 2>&1; then
-    stop_dock_launch_service
-    rm -f "$DOCK_LAUNCH_ENABLED_MARKER"
-    /usr/bin/codesign --force --sign - --identifier "$DOCK_LAUNCH_LABEL" "$DOCK_LAUNCH_APP" ||
-      warn "Could not ad-hoc sign $DOCK_LAUNCH_APP"
-  fi
-  if [[ -f "$DOCK_LAUNCH_ENABLED_MARKER" ]] && ! dock_launch_enabled_valid; then
-    rm -f "$DOCK_LAUNCH_ENABLED_MARKER"
-    stop_dock_launch_service
-  fi
-  # The app validates the executable-bound marker before monitoring anything.
-  # No KeepAlive: a crash or permission failure must not create a restart loop.
-  cat > "$DOCK_LAUNCH_PLIST" << DOCK_LAUNCH_AGENT_EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>Label</key><string>$DOCK_LAUNCH_LABEL</string>
-<key>ProgramArguments</key><array><string>$DOCK_LAUNCH_BIN</string><string>--service</string></array>
-<key>RunAtLoad</key><true/>
-<key>StandardErrorPath</key><string>$WINDOW_STATE_LOG</string>
-</dict></plist>
-DOCK_LAUNCH_AGENT_EOF
-  update_chrome_window_service install ||
-    warn 'Could not connect New Chrome Window service; it was left unchanged'
-  success "Dock launch helper installed; persistent mode requires explicit enable for this binary"
-}
-
-# Notify Services after a workflow changes; changing its inner plist alone
-# leaves the outer bundle timestamp unchanged and may leave cached actions.
-refresh_chrome_service_registration() {
-  touch "$HOME/Library/Services/New Chrome Window.workflow"
+# Changing a workflow's inner plist alone leaves cached Services actions in place.
+refresh_services_registration() {
+  touch "$1"
   /System/Library/CoreServices/pbs -update || warn 'Could not update macOS Services registration'
 }
 
-# Adapt only the known, user-installed Automator service. Do not register a
-# second shortcut, create a new service, or overwrite a customized workflow.
-update_chrome_window_service() {
-  local action="${1:-install}"
-  local repo_root="${OMARCHY_SOURCE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
-  local workflow="$HOME/Library/Services/New Chrome Window.workflow/Contents/document.wflow"
+# An earlier refresh pointed the user's existing New Chrome Window Automator
+# service at the Dock broker. Restore its original action only when the managed
+# copy is unchanged; a workflow customized since then is left alone.
+restore_chrome_window_service() {
+  local service="$HOME/Library/Services/New Chrome Window.workflow"
+  local workflow="$service/Contents/document.wflow"
   local backup="$BACKUP_DIR/chrome-window-service.original.wflow"
   local marker="$BACKUP_DIR/chrome-window-service.managed.sha256"
-  local source_key='actions.0.action.ActionParameters.source'
-  local current desired normalized original digest temporary
-  [[ -f "$workflow" ]] || return 0
-  digest=$(/usr/bin/shasum -a 256 "$workflow" | awk '{print $1}')
-  if [[ "$action" == revert ]]; then
-    if [[ -f "$backup" && -f "$marker" && "$(cat "$marker")" == "$digest" ]]; then
-      if ! cp -p "$backup" "$workflow"; then
-        warn "Could not restore New Chrome Window service; original kept at $backup"
-        return 0
-      fi
-      rm -f "$marker"
-      refresh_chrome_service_registration
-      success 'Original New Chrome Window service restored; shortcut unchanged'
-    elif [[ -f "$marker" ]]; then
-      warn "New Chrome Window service was customized; retained it and its backup at $backup"
+  [[ -f "$marker" ]] || return 0
+  if [[ -f "$workflow" && -f "$backup" &&
+        "$(cat "$marker")" == "$(/usr/bin/shasum -a 256 "$workflow" | awk '{print $1}')" ]]; then
+    if ! cp -p "$backup" "$workflow"; then
+      warn "Could not restore New Chrome Window service; original kept at $backup"
+      return 0
     fi
-    return 0
+    refresh_services_registration "$service"
+    success 'Original New Chrome Window service restored; shortcut unchanged'
+  else
+    warn "New Chrome Window service was customized; left it unchanged (original kept at $backup)"
   fi
-  current=$(/usr/bin/plutil -extract "$source_key" raw -o - "$workflow" 2>/dev/null) || return 0
-  desired=$(cat "$repo_root/helpers/new_chrome_window.applescript")
-  [[ "$current" != "$desired" ]] || return 0
-  normalized=$(printf '%s' "$current" | tr -d '[:space:]')
-  original='onrun{input,parameters}tellapplication"SystemEvents"tellapplication"GoogleChrome"makenewwindowactivateendtellendtellreturninputendrun'
-  if [[ "$normalized" != "$original" ]] &&
-     ! [[ -f "$marker" && "$(cat "$marker")" == "$digest" ]]; then
-    warn 'New Chrome Window service is customized; leaving it unchanged'
-    return 0
-  fi
-  # Require the single known action, so extra workflow steps cannot intervene
-  # between the explicit intent and window creation.
-  if /usr/bin/plutil -extract actions.1 xml1 -o - "$workflow" >/dev/null 2>&1; then
-    warn 'New Chrome Window service has extra actions; leaving it unchanged'
-    return 0
-  fi
-  # The caller runs this in conditional context, where set -e is suppressed;
-  # check each step so the workflow is never replaced without a backup.
-  if ! mkdir -p "$BACKUP_DIR" || ! { [[ -f "$backup" ]] || cp -p "$workflow" "$backup"; }; then
-    return 1
-  fi
-  temporary=$(mktemp "$(dirname "$workflow")/.omarchy-workflow.XXXXXX") || return 1
-  if ! cp -p "$workflow" "$temporary" ||
-     ! /usr/bin/plutil -replace "$source_key" -string "$desired" "$temporary" ||
-     ! mv "$temporary" "$workflow"; then
-    rm -f "$temporary"; return 1
-  fi
-  /usr/bin/shasum -a 256 "$workflow" | awk '{print $1}' > "$marker"
-  refresh_chrome_service_registration
-  success 'New Chrome Window service connected to guarded launch follow; shortcut unchanged'
-}
-
-cmd_dock_launch_follow() {
-  local action="${2:-status}" seconds="${3:-60}"
-  case "$action" in
-    enable)
-      [[ -x "$DOCK_LAUNCH_BIN" && -f "$DOCK_LAUNCH_PLIST" ]] || { error 'Run refresh first'; return 1; }
-      retire_legacy_chrome_rehome || return 1
-      mkdir -p "$BACKUP_DIR"
-      local marker_tmp
-      marker_tmp=$(mktemp "$BACKUP_DIR/.dock-enable.XXXXXX")
-      dock_launch_digest > "$marker_tmp" || { rm -f "$marker_tmp"; return 1; }
-      mv "$marker_tmp" "$DOCK_LAUNCH_ENABLED_MARKER"
-      dock_launch_start
-      ;;
-    disable|stop)
-      rm -f "$DOCK_LAUNCH_ENABLED_MARKER"
-      stop_dock_launch_service
-      launchctl disable "gui/$(id -u)/$DOCK_LAUNCH_LABEL" || return 1
-      echo 'dock-launch: disabled; no automatic restart at login'
-      ;;
-    status)
-      local reply='dock-launch: not running'
-      if [[ -x "$DOCK_LAUNCH_BIN" ]]; then reply=$("$DOCK_LAUNCH_BIN" --status 2>/dev/null) || reply='dock-launch: not responding'; fi
-      if dock_launch_enabled_valid; then
-        if dock_launch_service_healthy; then echo 'dock-launch: enabled and running persistently';
-        else echo "dock-launch: enabled but not healthy; $reply"; fi
-      elif [[ -f "$DOCK_LAUNCH_ENABLED_MARKER" ]]; then
-        echo "dock-launch: stale binary authorization; $reply"
-      else echo "dock-launch: persistent mode disabled; $reply"; fi
-      ;;
-    observe|trial)
-      if [[ -f "$DOCK_LAUNCH_ENABLED_MARKER" ]] || dock_launch_service_healthy; then
-        error 'Disable persistent Dock follow before starting an isolated observe/trial session'; return 1
-      fi
-      [[ "$seconds" =~ ^[0-9]+$ && "$seconds" -ge 1 && "$seconds" -le 3600 ]] || {
-        error 'Duration must be an integer from 1 to 3600 seconds'; return 2;
-      }
-      [[ -x "$DOCK_LAUNCH_BIN" ]] || { error "Run refresh to install the helper first"; return 1; }
-      local mode="--observe"
-      [[ "$action" != trial ]] || mode="--serve"
-      info "Starting bounded Dock launch $action (${seconds}s); logs: $WINDOW_STATE_LOG"
-      info "This app requires its own Accessibility grant; a missing grant fails closed."
-      /usr/bin/open -W -n "$DOCK_LAUNCH_APP" --stdout "$WINDOW_STATE_LOG" --stderr "$WINDOW_STATE_LOG" --args "$mode" "$seconds"
-      ;;
-    *) error 'Usage: ./omarchy.sh dock-launch-follow observe|trial [seconds] | enable | disable | status | stop'; return 2 ;;
-  esac
+  rm -f "$marker"
 }
 
 # =============================================================================
@@ -6298,8 +5655,6 @@ usage() {
   echo "                         show Accessibility permissions that need to be redone"
   echo "  ./omarchy.sh control-word-navigation canary [seconds]|enable|disable|status"
   echo "                         safely test and control Control-arrow word navigation"
-  echo "  ./omarchy.sh dock-launch-follow observe|trial [seconds]|enable|disable|status|stop"
-  echo "                         guarded Dock launch follow; persistent mode is opt-in"
   echo "  ./omarchy.sh revert    undo everything, restore previous state"
   echo "  ./omarchy.sh status    show install and service status"
   echo ""
@@ -6317,7 +5672,6 @@ case "${1:-}" in
   secure-input)  cmd_secure_input  "$@" ;;
   accessibility) cmd_accessibility "$@" ;;
   control-word-navigation) cmd_control_word_navigation "$@" ;;
-  dock-launch-follow) cmd_dock_launch_follow "$@" ;;
   revert)        cmd_revert        ;;
   status)        cmd_status        ;;
   "")            usage; exit 0     ;;
