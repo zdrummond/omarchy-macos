@@ -77,6 +77,7 @@ case "$cmd" in
   move-node-to-workspace)
     [[ "${1:-}" == "--window-id" ]]
     printf 'move:%s:%s\n' "$2" "$3" >> "$OMARCHY_FAKE_COMMANDS"
+    [[ "${OMARCHY_FAKE_MOVE_FAIL:-0}" == 0 ]]
     ;;
   workspace)
     printf 'workspace:%s\n' "${1:-}" >> "$OMARCHY_FAKE_COMMANDS"
@@ -88,6 +89,7 @@ case "$cmd" in
   layout)
     [[ "${1:-}" == "--window-id" ]]
     printf 'layout:%s:%s\n' "${2:-}" "${3:-}" >> "$OMARCHY_FAKE_COMMANDS"
+    [[ "${OMARCHY_FAKE_LAYOUT_FAIL:-0}" == 0 ]]
     ;;
   *)
     printf 'unexpected fake aerospace command: %s\n' "$cmd" >&2
@@ -106,6 +108,11 @@ cat > "$CONFIG_DIR/responsive_layout.sh" <<'EOF'
 printf 'responsive:%s:%s\n' "${1:-}" "${2:-}" >> "$OMARCHY_FAKE_COMMANDS"
 EOF
 
+cat > "$CONFIG_DIR/rehomed_window_close_watch.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'close-watcher\n' >> "$OMARCHY_FAKE_COMMANDS"
+EOF
+
 chmod +x "$CONFIG_DIR"/*.sh "$FAKE_BIN/aerospace"
 export PATH="$FAKE_BIN:$PATH"
 export OMARCHY_AEROSPACE_BIN="$FAKE_BIN/aerospace"
@@ -114,7 +121,6 @@ export OMARCHY_FAKE_FOCUSED="$FOCUSED_FILE"
 export OMARCHY_FAKE_COMMANDS="$COMMANDS_FILE"
 export OMARCHY_WINDOW_STATE_LOG="$LOG_FILE"
 export OMARCHY_SPACE_ALIAS_FILE="$ALIAS_FILE"
-export OMARCHY_REHOME_FOLLOW_DELAY=0
 
 write_default_aliases() {
   cat > "$ALIAS_FILE" <<'EOF'
@@ -131,6 +137,8 @@ run_case() {
   : > "$COMMANDS_FILE"
   : > "$LOG_FILE"
   "$CONFIG_DIR/unassigned_window_rehome.sh" "$1"
+  # Every automatic path must remain focus-neutral, including failures.
+  ! grep -Eq '^(workspace:|focus:|close-watcher)' "$COMMANDS_FILE" || exit 1
 }
 
 write_default_aliases
@@ -141,10 +149,50 @@ run_case 60
 grep -Fq 'transient authentication window retained workspace=04 window=60' "$LOG_FILE"
 grep -Fq 'no rehome or follow' "$LOG_FILE"
 
+# Replay the Gmail incident: Steam toast appears while Gmail remains focused.
+printf '52773|01|Steam Helper|com.valvesoftware.steam.helper|notificationtoasts_2545_desktop\n' > "$WINDOWS_FILE"
+printf '1561|01|Gmail|com.google.Chrome.app.fmgjjmmmlfnkbppncabfkddbjimcfncm|\n' > "$FOCUSED_FILE"
+run_case 52773
+[[ "$(cat "$COMMANDS_FILE")" == "layout:52773:floating" ]]
+grep -Fq 'transient Steam notification retained workspace=01 window=52773' "$LOG_FILE"
+
+# A float failure cannot fall through to a move or responsive layout.
+export OMARCHY_FAKE_LAYOUT_FAIL=1
+run_case 52773
+[[ "$(cat "$COMMANDS_FILE")" == "layout:52773:floating" ]]
+grep -Fq 'retained but float failed' "$LOG_FILE"
+unset OMARCHY_FAKE_LAYOUT_FAIL
+
+# Do not exempt ordinary Steam windows or unrelated apps with similar titles.
+for row in \
+  '61|01|Steam Helper|com.valvesoftware.steam.helper|Steam' \
+  '61|01|Other|com.example.other|notificationtoasts_2545_desktop' \
+  '61|01|Steam Helper|com.valvesoftware.steam.helper|notificationtoasts_2545_desktop settings'; do
+  printf '%s\n' "$row" > "$WINDOWS_FILE"
+  run_case 61
+  [[ "$(cat "$COMMANDS_FILE")" == $'move:61:07\nsave:unassigned-window-rehome-07\nresponsive:unassigned-window-rehome-07:61' ]]
+done
+
+# Background window creation still sorts the window but never follows it.
+printf '62|01|Bear|net.shinyfrog.bear|Notes\n' > "$WINDOWS_FILE"
+run_case 62
+[[ "$(cat "$COMMANDS_FILE")" == $'move:62:07\nsave:unassigned-window-rehome-07\nresponsive:unassigned-window-rehome-07:62' ]]
+grep -Fq 'automatic follow disabled' "$LOG_FILE"
+export OMARCHY_FAKE_MOVE_FAIL=1
+run_case 62
+[[ "$(cat "$COMMANDS_FILE")" == $'move:62:07\nresponsive:window-detected-move-failed-01:62' ]]
+unset OMARCHY_FAKE_MOVE_FAIL
+
+# Invalid or vanished callback IDs must be harmless.
+run_case 99999
+[[ ! -s "$COMMANDS_FILE" ]]
+run_case invalid
+[[ ! -s "$COMMANDS_FILE" ]]
+
 printf '10|04|Bear|net.shinyfrog.bear\n20|08|Todoist|com.todoist.mac.Todoist\n' > "$WINDOWS_FILE"
 printf '10|04|Bear|net.shinyfrog.bear\n' > "$FOCUSED_FILE"
 run_case 10
-expected=$'move:10:07\nsave:unassigned-window-rehome-07\nresponsive:unassigned-window-rehome-07:10\nworkspace:07\nfocus:10'
+expected=$'move:10:07\nsave:unassigned-window-rehome-07\nresponsive:unassigned-window-rehome-07:10'
 actual="$(cat "$COMMANDS_FILE")"
 [[ "$actual" == "$expected" ]]
 
@@ -160,7 +208,7 @@ printf '%s\n' \
   '22|09|Notes|com.apple.Notes' > "$WINDOWS_FILE"
 printf '10|04|Bear|net.shinyfrog.bear\n' > "$FOCUSED_FILE"
 run_case 10
-expected=$'move:10:00\nsave:unassigned-window-rehome-00\nresponsive:unassigned-window-rehome-00:10\nworkspace:00\nfocus:10'
+expected=$'move:10:00\nsave:unassigned-window-rehome-00\nresponsive:unassigned-window-rehome-00:10'
 actual="$(cat "$COMMANDS_FILE")"
 [[ "$actual" == "$expected" ]]
 
@@ -177,7 +225,7 @@ run_case 12
 printf '13|07|Bear|net.shinyfrog.bear\n' > "$WINDOWS_FILE"
 printf '13|07|Bear|net.shinyfrog.bear\n' > "$FOCUSED_FILE"
 run_case 13
-expected=$'move:13:08\nsave:unassigned-window-rehome-08\nresponsive:unassigned-window-rehome-08:13\nworkspace:08\nfocus:13'
+expected=$'move:13:08\nsave:unassigned-window-rehome-08\nresponsive:unassigned-window-rehome-08:13'
 actual="$(cat "$COMMANDS_FILE")"
 [[ "$actual" == "$expected" ]]
 
@@ -189,7 +237,7 @@ printf '%s\n' \
   '22|09|Notes|com.apple.Notes' > "$WINDOWS_FILE"
 printf '50|03|TV|com.apple.TV\n' > "$FOCUSED_FILE"
 run_case 50
-expected=$'move:50:00\nsave:unassigned-window-rehome-00\nresponsive:unassigned-window-rehome-00:50\nworkspace:00\nfocus:50'
+expected=$'move:50:00\nsave:unassigned-window-rehome-00\nresponsive:unassigned-window-rehome-00:50'
 actual="$(cat "$COMMANDS_FILE")"
 [[ "$actual" == "$expected" ]]
 
@@ -209,5 +257,40 @@ printf '40|04|Bear|net.shinyfrog.bear\n' > "$FOCUSED_FILE"
 run_case 40
 [[ ! -s "$COMMANDS_FILE" ]]
 rm -f "$GUARD_FILE"
+
+# A live broker owns a successful guarded move; shell must not duplicate it.
+BROKER="$HOME/Applications/Omarchy Dock Launch.app/Contents/MacOS/dock_launch_follow"
+mkdir -p "$(dirname "$BROKER")"
+cat > "$BROKER" <<'EOF'
+#!/usr/bin/env bash
+printf 'broker:%s:%s:%s:%s:%s\n' "$1" "$2" "$3" "$4" "$5" >> "$OMARCHY_FAKE_COMMANDS"
+if [[ "${OMARCHY_FAKE_BROKER:-success}" == timeout-moved ]]; then
+  printf '40|08|Bear|net.shinyfrog.bear\n' > "$OMARCHY_FAKE_WINDOWS"
+  exit 1
+fi
+[[ "${OMARCHY_FAKE_BROKER:-success}" == success ]]
+EOF
+chmod +x "$BROKER"
+run_case 40
+[[ "$(cat "$COMMANDS_FILE")" == $'broker:--move:40:04:07:net.shinyfrog.bear\nsave:unassigned-window-rehome-07\nresponsive:unassigned-window-rehome-07:40' ]]
+grep -Fq 'Dock-authorized launch rehome moved and followed' "$LOG_FILE"
+
+# Missing intent, permission denial, crash, and command errors are all a
+# declined broker response: normal placement, with no shell focus command.
+export OMARCHY_FAKE_BROKER=declined
+run_case 40
+[[ "$(cat "$COMMANDS_FILE")" == $'broker:--move:40:04:07:net.shinyfrog.bear\nmove:40:07\nsave:unassigned-window-rehome-07\nresponsive:unassigned-window-rehome-07:40' ]]
+
+# If the window moved while a request failed/timed out, do not move it again.
+export OMARCHY_FAKE_BROKER=timeout-moved
+run_case 40
+[[ "$(cat "$COMMANDS_FILE")" == 'broker:--move:40:04:07:net.shinyfrog.bear' ]]
+grep -Fq 'skipped stale rehome window=40 source=04 actual=08' "$LOG_FILE"
+unset OMARCHY_FAKE_BROKER
+
+# The known notification never reaches the broker, even if it would approve.
+printf '52773|01|Steam Helper|com.valvesoftware.steam.helper|notificationtoasts_2545_desktop\n' > "$WINDOWS_FILE"
+run_case 52773
+[[ "$(cat "$COMMANDS_FILE")" == 'layout:52773:floating' ]]
 
 printf 'unassigned_window_rehome_fake.sh: all checks passed\n'

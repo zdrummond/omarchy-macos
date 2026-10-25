@@ -37,6 +37,16 @@ not remembered bindings:
 - Control-arrow word navigation is a separate fail-open event-tap app generated
   by `install.sh`; it rewrites events in place after skhd and must pass a timed
   canary before its LaunchAgent is enabled.
+- Dock launch follow is opt-in. `install.sh` builds
+  `helpers/dock_launch_follow.swift`; bounded observe/trial sessions or an
+  explicitly enabled, executable-bound LaunchAgent broker one-use Dock intent
+  for assigned and unassigned placement. The service has no KeepAlive; startup
+  verifies launchd state and the exact broker PID. The legacy Chrome helper is
+  permanently disabled and its agent moved out of auto-start.
+- The existing `New Chrome Window` Automator service can register explicit
+  Chrome intent with that broker. Its shortcut stays owned by macOS Services;
+  `helpers/new_chrome_window.applescript` is the durable action source, and
+  refresh adapts only the known workflow with backup and guarded revert.
 - AeroSpace owns tiling, focus, workspace placement, and most window bindings.
 - skhd owns global app launchers and macOS commands that AeroSpace does not.
 - SketchyBar owns the per-monitor workspace UI and status indicators.
@@ -58,11 +68,14 @@ not remembered bindings:
 - Workspaces are two digits: `<monitor-slot><key>`. Slot `0` is the built-in
   display; attached external displays use slots `1` through `3`.
 - Assigned apps belong in their canonical named workspace, but automatic
-  placement must not steal focus.
+  placement must not steal focus by default; guarded Dock intent is the
+  explicit-intent exception described below.
 - Unassigned apps must not pollute named workspaces. Transient macOS
   authentication UI is the narrow exception: it stays floating on the launch
-  workspace so a Touch ID prompt cannot pull the user elsewhere. Launch-time
-  rehome and its follow/return behavior are guarded and logged.
+  workspace so a Touch ID prompt cannot pull the user elsewhere. Known Steam
+  notification toasts are also exempt at detection. Launch-time rehome is
+  guarded and logged, with no automatic follow/return by default. An explicitly
+  enabled Dock broker can authorize one exact ordinary window to move and follow.
 - Startup restore must never allow a partial login layout to overwrite a
   known-good snapshot.
 - Focus changes must not warp the pointer.

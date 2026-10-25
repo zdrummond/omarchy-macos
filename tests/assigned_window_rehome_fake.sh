@@ -68,4 +68,49 @@ printf '99|02|Messages|com.apple.MobileSMS|New Message\n' > "$WINDOWS"
 [[ ! -s "$COMMANDS" ]]
 grep -q 'already=02.*no workspace activation' "$LOG_FILE"
 
+# Assigned apps use the same exact-window broker contract as unassigned apps.
+BROKER="$HOME/Applications/Omarchy Dock Launch.app/Contents/MacOS/dock_launch_follow"
+mkdir -p "$(dirname "$BROKER")"
+cat > "$BROKER" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'broker:%s\n' "$*" >> "$OMARCHY_FAKE_COMMANDS"
+case "$OMARCHY_FAKE_BROKER" in
+  approve) exit 0 ;;
+  denied|no-intent|dialog) exit 1 ;;
+  timeout-moved)
+    printf '11323|06|Gemini|com.google.GeminiMacOS|Gemini\n' > "$OMARCHY_FAKE_WINDOWS"
+    exit 1 ;;
+  user-moved)
+    printf '11323|08|Gemini|com.google.GeminiMacOS|Gemini\n' > "$OMARCHY_FAKE_WINDOWS"
+    exit 1 ;;
+  vanished) : > "$OMARCHY_FAKE_WINDOWS"; exit 1 ;;
+  *) exit 99 ;;
+esac
+EOF
+chmod +x "$BROKER"
+
+for outcome in approve denied no-intent dialog timeout-moved user-moved vanished; do
+  export OMARCHY_FAKE_BROKER="$outcome"
+  printf '11323|01|Gemini|com.google.GeminiMacOS|Gemini\n' > "$WINDOWS"
+  cp "$WINDOWS" "$FOCUSED"
+  : > "$COMMANDS"
+  "$HELPER" 06 11323
+  [[ "$(head -n 1 "$COMMANDS")" == 'broker:--move 11323 01 06 com.google.GeminiMacOS' ]]
+  case "$outcome" in
+    denied|no-intent|dialog)
+      [[ "$(tail -n 1 "$COMMANDS")" == 'move-node-to-workspace --window-id 11323 06' ]]
+      [[ "$(wc -l < "$COMMANDS" | tr -d ' ')" == 2 ]] ;;
+    *) [[ "$(wc -l < "$COMMANDS" | tr -d ' ')" == 1 ]] ;;
+  esac
+done
+grep -q 'Dock-authorized assigned window moved and followed window=11323 from=01 to=06' "$LOG_FILE"
+grep -q 'skipped stale assigned rehome window=11323 source=01 actual=08' "$LOG_FILE"
+grep -q 'skipped stale assigned rehome window=11323 source=01 actual=gone' "$LOG_FILE"
+
+# Already-placed windows never request a late follow, even with an active broker.
+printf '11323|06|Gemini|com.google.GeminiMacOS|Gemini\n' > "$WINDOWS"
+: > "$COMMANDS"
+"$HELPER" 06 11323
+[[ ! -s "$COMMANDS" ]]
 printf 'assigned_window_rehome_fake.sh: all checks passed\n'

@@ -65,14 +65,14 @@ run_case() {
 }
 
 # The followed window is gone, target 00 is focused and empty, and source 04
-# still has a terminal: return to 04.
+# still has a terminal: even this formerly eligible return must do nothing.
 : > "$ALL_WINDOWS"
 printf '00\n' > "$FOCUSED_WORKSPACE"
 printf '7441\n' > "$SOURCE_WINDOWS"
 : > "$TARGET_WINDOWS"
 run_case
-[[ "$(cat "$COMMANDS")" == "workspace:04" ]]
-grep -q 'returned from empty workspace=00 to source=04 window=99' "$LOG_FILE"
+[[ ! -s "$COMMANDS" ]]
+grep -q 'automatic close-return disabled window=99' "$LOG_FILE"
 
 # Respect navigation elsewhere after launch.
 printf '05\n' > "$FOCUSED_WORKSPACE"

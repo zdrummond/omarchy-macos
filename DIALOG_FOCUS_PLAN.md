@@ -1,6 +1,188 @@
 # Dialog and focus protection plan
 
-Status: planned; broader dialog protection is not implemented.
+Status: broader dialog protection is planned, not implemented. The October 9
+incident fix exempts known Steam toasts at detection and removes all automatic
+rehome follow/close-return commands. General classification remains pending.
+The guarded Dock exception supports bounded observe/trial sessions and explicit
+persistent enablement. Chrome's cold-launch happy path was accepted
+on October 18; assigned-app and live cancellation coverage remain pending.
+On October 11 the read-only
+probe captured a Chrome Dock click followed by matching activation after 0.17s;
+that establishes click detection, not the full follow acceptance test.
+The October 17 Gemini event confirmed assigned placement moved its focused
+window from `01` to `06` without following. The bounded broker now covers both
+assigned and unassigned placement; this still requires installed-app permission
+and live acceptance. It does not yet implement general dialog stay-in-place.
+
+October 17 deployment: all 26 fake scripts passed; the final startup-diagnostic
+change also passed the helper compile/policy/generator test. `refresh` deployed
+both placement integrations and the dormant app. Installed observation exited
+with `Accessibility permission missing`; no live follow trial has run. The user
+must grant Accessibility to `~/Applications/Omarchy Dock Launch.app` before
+observation and live acceptance. Surviving window IDs retained their workspaces
+across refresh; restore/startup/incomplete guards were absent. Service shutdown
+saved the current layout; the prior snapshot is backed up at
+`/tmp/omarchy-dock-deploy.I2HFQI/window_state.before.json` (temporary, not durable).
+
+Subsequent observation: removing and re-adding the Accessibility entry allowed
+the installed broker to start. The 11:31 Chrome test captured the Dock click at
+11:31:27, expired at 11:31:30, and recorded placement at 11:31:35. System logs
+show Chrome's new process starting at 11:31:28 and AppKit window restoration at
+11:31:33–34, supporting cold startup as a substantial part of the delay. This
+does not measure the exact callback queue delay. The broker now allows fifteen
+seconds only for cold launches, while keeping three seconds for already-running
+apps and preserving every cancellation/identity/dialog gate. New timing logs
+separate process binding, focused-window observation, and placement requests.
+The helper's 35 policy checks and both placement integration tests pass. The
+11:38 refresh deployed this version; the installed source matches and its policy
+self-test passes. Observation again reports missing Accessibility permission
+after the rebuild, so the app must be removed/re-added before another test. No
+live follow trial has run. Surviving windows retained their workspaces, all
+restore guards remained absent, and Control-arrow stayed enabled and running.
+Refresh saved the current layout on shutdown; the preceding snapshot is backed
+up at `/tmp/omarchy-cold-launch-deploy.Y3ilwR/window_state.before.json`.
+
+October 18 observer-readiness fix: the October 17 11:47 Chrome observation
+cancelled observer attachment after 0.28 seconds, before placement at 11:47:08.
+The helper now pins process identity before attachment and retries selected AX
+startup failures for at most two seconds/20 attempts, without extending the
+launch deadline. Every attempt checks cancellation conditions. An arriving
+placement request still declines and discards intent if the observer is not
+ready; there is no queued follow. Diagnostics distinguish creation from
+notification-registration errors and report the actual AX error code.
+All 26 fake scripts pass, including 37 follow-policy and 47 attachment checks.
+The compiler reports Swift 6 language-mode concurrency compatibility warnings;
+the current build succeeds, but strict Swift 6 compatibility is not established.
+Live observer-recovery and follow acceptance remain pending.
+The October 18 12:37 refresh deployed the retry build. Installed source and
+signature verification pass, and the installed binary passes all 84 checks.
+The startup check again reports missing Accessibility permission after the
+rebuild; the user must re-add the app before observation. Surviving window IDs
+kept their workspaces, restore/startup/incomplete guards were absent, and the
+Control-arrow helper remained enabled and running. The saver wrote a shutdown
+snapshot; the previous snapshot is backed up at
+`/tmp/omarchy-observer-retry-deploy.TIhYMh/window_state.before.json`.
+
+October 18 acceptance: after permission was re-added, the 12:45 observation
+recovered registration on attempt 6 (about 1.2 seconds) and logged `would-follow`
+for Chrome window 62400 from `04` to `00`. The user then approved a live trial.
+At 12:47, registration recovered on attempt 8 (about 1.2 seconds), and the
+broker consumed intent and successfully moved/followed Chrome window 62440
+from `04` to `00`. The user confirmed that it worked. A second window's request
+had no remaining intent. The trial was stopped and status confirmed not running.
+This verifies the Chrome cold-launch happy path, not all apps, dialog types,
+or live cancellation scenarios. Persistent enablement remains unimplemented.
+
+October 18 12:51 cancellation trial: Chrome intent was cancelled with
+`different-or-existing-window` about 1.27 seconds after the Dock click. Both
+subsequent placement requests had `pending=false`; no broker follow was issued.
+Workspace diagnostics show the switch to `02` at 12:51:07 and no subsequent
+workspace change until 12:54:48. The trial expired and status was not running.
+This confirms the no-follow outcome, but does not independently validate the
+navigation-cancellation branch: a window/focus check cancelled intent first.
+
+October 24: diagnosis of another Chrome launch found the new broker stopped
+(only short trials had been run) and the legacy Chrome LaunchAgent running
+again. Its log moved window 2606 from `08` to `09` at 14:08:24; workspace
+diagnostics then returned to `08`. The legacy plist still had RunAtLoad and
+KeepAlive: unloading it during refresh had not retired login startup.
+The user approved permanent legacy retirement and opt-in persistent operation
+of the guarded replacement. The implementation disables/boots out the old label
+and moves its plist into recoverable backup storage outside LaunchAgents.
+The new service is executable-authorized, has no KeepAlive, verifies actual
+launchd state plus exact-PID IPC readiness, and rolls failed enablement back.
+Unchanged refreshes preserve authorization/signature; changed builds need
+explicit enable and may need a fresh Accessibility grant. `stop` is now an alias
+for persistent `disable`. Lifecycle fake tests cover startup failures,
+permission denial, crashes, stale binaries, mismatched readiness, and failed
+legacy retirement. All 27 fake scripts passed (with the previously noted Swift
+concurrency compatibility warnings). The 14:22 refresh deployed the new build.
+The legacy label is confirmed disabled and unloaded; its plist was moved to
+`~/.omarchy-macos-backup/retired-launchagents/chrome_rehome.KZkVZm`.
+The installed source, signature, plist, and 84 helper checks verify. The explicit
+enable attempt at 14:23 failed with `Accessibility permission missing` and
+rolled back: authorization removed, job unloaded, and new label disabled.
+Persistent activation now requires the user to re-add the rebuilt app's
+Accessibility entry, followed by `dock-launch-follow enable` and readiness
+verification. Control-arrow remains enabled/running; restore guards are absent.
+Refresh saved the current layout on shutdown; the prior snapshot is at
+`/tmp/omarchy-persistent-deploy.LfYn09/window_state.before.json`. Placement
+comparison found Todoist 2682 changing `09` to `00`; logs show an explicit
+`move-node-to-workspace-00` save at 14:22:34, before persistent startup was tried.
+No restore/repair was run. Changes remain uncommitted.
+
+October 24 14:27 activation: after the user renewed Accessibility permission,
+`dock-launch-follow enable` succeeded. Both launchd (`state = running`, PID
+19471) and the exact-PID IPC readiness check report persistent service mode.
+The legacy Chrome label remains disabled and its job unloaded. The new label
+is enabled for login; no layout restore/save/repair was invoked during this
+activation. Login survival and Gemini-specific live acceptance are not yet
+verified. `dock-launch-follow disable` is the persistent off switch.
+
+October 25 shortcut diagnosis: Option-Command-Equal is owned by the existing
+`~/Library/Services/New Chrome Window.workflow`, confirmed by its macOS Services
+key equivalent `@~=`. Its AppleScript creates a Chrome window and activates the
+app without Dock intent. The integration now registers one-use Chrome intent
+before that existing action, with the same exact-window/focus/navigation gates.
+Creation failures cancel only their matching request token; an absent or
+declining broker leaves ordinary creation/no-follow placement available. No
+new hotkey owner is installed. Refresh backs up and adapts only the known
+single-action workflow; guarded revert preserves subsequent custom edits.
+All 28 fake scripts, shell syntax, spec drift, and whitespace checks pass.
+The helper has 90 policy/attachment/command-freshness checks. The new Automator
+test executes the real action control flow with fake Chrome/broker operations,
+including arming failure and creation failure. It needs macOS scripting
+additions outside the sandbox. Existing Swift 6 compatibility warnings remain.
+The 10:31 refresh deployed the helper and adapted the workflow; the installed
+source, signature, action source, and unchanged `@~=` shortcut verify. The
+original workflow is backed up at
+`~/.omarchy-macos-backup/chrome-window-service.original.wflow`. Explicit enable
+failed at 10:31:10 with `Accessibility permission missing` and rolled back;
+the broker is currently disabled/not running. The user must renew the rebuilt
+app's Accessibility entry before enable and real shortcut acceptance. No live
+shortcut was invoked by the agent. Surviving windows kept their workspaces,
+restore/startup/incomplete guards were absent, and Control-arrow remained
+enabled/running. Refresh saved 15 windows on shutdown; the previous baseline
+is at `/tmp/omarchy-chrome-service-deploy.1hGRD2/window_state.before.json`.
+No restore or repair command was run. Real shortcut acceptance remains pending.
+
+October 25 10:32 activation: after the user renewed Accessibility permission,
+enable succeeded. Launchd reports `state = running`, PID 91405, and exact-PID
+broker readiness confirms persistent service mode. The log records
+`listening mode=service duration=persistent`. No window action or manual
+save/restore/repair was invoked during activation. Option-Command-Equal live
+acceptance remains pending.
+
+October 25 10:43 shortcut failure: Chrome window 4186 was placed `04` to `00`
+with `pending=false`, while the persistent broker was healthy. There was no
+recorded command intent. Both direct AppleScript and temporary read-only
+Automator workflows successfully registered/cancelled intent without creating
+windows. Services registration points to the expected workflow, but its outer
+bundle timestamp had remained in 2022 despite the inner plist update. A stale
+action is a hypothesis, not a confirmed cause; the shortcut's actual execution
+path still needs acceptance. The user does not recall its setup and doubts it
+is Raycast.
+
+The service now logs invocation, arm result, and creation result (numeric error
+codes only) to the shared rotating log. Workflow updates/revert touch the
+bundle and update Services registration without flushing preferences. Fake
+service tests cover diagnostic success/failure and registration calls without
+touching the live registry; they pass, as do shell syntax, drift, and whitespace
+checks. The 10:49 refresh deployed these changes. The helper binary digest was
+unchanged and its enabled service resumed successfully, preserving AX trust.
+Surviving windows kept their workspaces across refresh; the shutdown saver
+updated the baseline, backed up beforehand at
+`/tmp/omarchy-service-diagnostics-deploy.xwuvRA/window_state.before.json`.
+
+At 10:50, one direct execution of the installed workflow through `automator`
+passed live: command intent was armed, Chrome observer attached, new window
+4242 validated, and one move-and-follow succeeded `04` to `00` at 0.75 seconds.
+Read-only AeroSpace query confirmed focused window `4242|00|com.google.Chrome`.
+The test window was left open, and normal rehome autosave recorded it. The
+earlier `NSPerformService` probe returned accepted but produced no observed
+workflow log or new window. Broker status remains healthy; restore guards are
+absent. No restore/repair or manual save was run. Direct workflow acceptance
+passes; physical Option-Command-Equal routing remains unverified.
 
 Branch: `codex/dialog-focus-protection`.
 Baseline: `9127d14` — the existing Touch ID exception, rapid workspace-change
@@ -8,6 +190,11 @@ diagnostics, documentation, and regression tests. This plan builds on that
 commit. `SPEC.md` remains the contract for currently implemented behavior.
 
 ## Problem and evidence
+
+On October 9 at 13:07:35, the catch-all moved Steam Helper window 52773
+(`notificationtoasts_2545_desktop`) from Gmail's workspace 01 to 00 and
+explicitly followed it. That initiating action is confirmed by the move and
+focus logs. The subsequent 00-to-04 transition is not attributed.
 
 The September 12, 2026 diagnostics show three different situations:
 
@@ -79,7 +266,7 @@ Update generators in `install.sh`, not only installed outputs:
 
 - `assigned_window_rehome.sh`: inspect before canonical app assignment.
 - `unassigned_window_rehome.sh`: inspect before choosing a destination or
-  scheduling move/follow/return behavior.
+  scheduling movement; keep automatic follow/return disabled.
 - `responsive_layout.sh`: do not force protected windows into tiling, and
   exclude dialogs from the count that triggers a layout change.
 - `omarchy_repair_app_assigned_workspaces`: preserve the exception during
@@ -117,23 +304,15 @@ during development.
 
 ### 4. Cancel stale automatic focus actions
 
-An automatic follow is eligible only for an ordinary window that was active
-when the event was observed and still has a valid interaction context. A
-background window appearing must not pull the user away.
-
-Capture window identity, workspace, and a focus/navigation generation when
-scheduling work. Invalidate pending work on intervening user navigation,
-focus changes within the same workspace, window destruction, or new dialog
-activity. Checking only the final workspace misses leave-and-return cases.
-Recognize the helper's own expected transition so it does not invalidate its
-own successful action. Recheck immediately before issuing a focus command.
-
-For close-return behavior, preserve the existing empty-target/nonempty-source
-conditions and require uninterrupted eligibility since the follow. A watcher
-must retire after navigation elsewhere even if the user later revisits that
-workspace. If already back at the source, treat that as completion. Log actual
-command errors and observed post-command state; avoid forced repeated returns
-that would create another focus fight.
+Superseded by the October 9 no-automatic-follow policy in `SPEC.md`: window
+detection cannot reliably establish user intent, so rehome never issues focus
+or workspace activation commands by default. The optional bounded Dock trial
+brokers explicit click intent, exact new ordinary-window identity, navigation
+cancellation, and one-shot consumption (see `SPEC.md`). Close-return remains
+disabled. Do not restore general automatic follow
+merely based on the current focus or a settle delay. Explicit
+user move-and-follow remains separate. Future delayed movement/classification
+work still needs cancellation on intervening navigation and window destruction.
 
 ### 5. Record requested and observed focus separately
 
@@ -163,8 +342,9 @@ Required regression coverage:
   windows, and recycled IDs.
 - Snapshot filtering, legacy records, restore fallback matching, and baseline
   preservation on incomplete classification.
-- Focus changing during a delayed follow, leaving and returning before close,
-  same-workspace focus changes, already-returned state, and command failure.
+- No automatic follow or close-return on any detection path, including
+  background windows, failed moves, and legacy watcher invocation. For future
+  delayed classification, navigation changes must cancel stale movement.
 - Normal launch placement, explicit move/follow shortcuts, and monitor repair.
 
 Run focused fake tests, generated syntax/compile checks, the full fake suite,
@@ -183,7 +363,7 @@ to verify cancellation. Do not call the work complete based only on a dialog
 appearing successfully: verify typing focus and workspace after dismissal.
 
 Success means supported dialogs produce no automatic workspace movement,
-normal user navigation works, stale follow/return actions cancel, and remaining
+normal user navigation works, automatic follow/return stays disabled, and remaining
 unexplained activation events have usable incident traces. Universal prevention
 of application-driven focus changes is not promised.
 

@@ -245,16 +245,111 @@ snapshot or login-time app launch cannot crowd the message workspace.
   being overwritten. After replay, the same named-workspace ownership rule is
   applied once so stale snapshots cannot repopulate named spaces. Apple TV is
   unassigned; it must not be treated as a Music workspace app. After a
-  successful launch-time rehome, the save and responsive-layout checks finish,
-  then a short bounded settle delay allows launch-time activation events to
-  drain before AeroSpace switches to the destination workspace and focuses the
-  rehomed window. The newly created window must remain in view rather than
-  being pulled back to its source workspace by a late application event. A
-  bounded watcher tracks each automatically followed window. If that window
-  closes while its destination remains focused and has become empty, and its
-  source workspace still contains windows, Omarchy returns to the source
-  workspace. It does nothing if the user has navigated elsewhere or another
-  window remains at the destination.
+  successful launch-time rehome, the save and responsive-layout checks run,
+  but by default the helper never activates the destination workspace or focuses
+  the window. Window detection is not evidence of user launch intent: background
+  windows and delayed callbacks must not cause automatic follow. This applies
+  even when the detected window is focused. Closing a rehomed window never
+  triggers an automatic workspace return; the legacy close watcher is a no-op.
+  Explicit user move-and-follow shortcuts are unchanged. Applications/macOS
+  may still activate their own windows; this policy removes Omarchy's automatic
+  follow commands, not all possible sources of focus changes.
+- **Guarded, opt-in Dock-launch follow.** The optional Dock broker is built
+  during install/refresh and defaults to disabled. `dock-launch-follow observe [seconds]` evaluates
+  requests without moving or focusing anything itself; `trial [seconds]` permits
+  guarded move-and-follow for that session (default 60 seconds, maximum 3600).
+  `enable` authorizes persistent operation for the exact executable digest and
+  loads a RunAtLoad LaunchAgent with no KeepAlive. Success requires launchd's
+  actual `state = running` and a service-mode IPC response from that same PID.
+  Startup failure rolls back authorization and unloads/disables the job.
+  The service checks its executable-bound authorization before monitoring and
+  exits if authorization or Accessibility trust is lost; it does not restart
+  automatically after a crash or failure. `status` distinguishes healthy service,
+  disabled mode, stale authorization, and enabled-but-unhealthy operation.
+  `disable` (also `stop`) deletes authorization, unloads the job, disables login
+  startup, and discards any trial/intent. Trials refuse to run while persistent
+  mode is authorized. Refresh/service stop cancels current intent; unchanged
+  authorized builds resume at service start and login, while rebuilt/re-signed
+  or digest-mismatched binaries require explicit enable again. Unchanged valid
+  builds are not re-signed. Persistent diagnostics reopen the daily rotated log
+  on each write. Normal no-follow placement remains the
+  fallback when it is absent, untrusted, unable to inspect a window, or declines.
+  Both assigned-app and catch-all unassigned launch placement may request this
+  exception; their destination-selection rules remain unchanged.
+  A completed unmodified left click on a Dock application icon grants at most
+  one attempt for that exact bundle and application URL. An app already running
+  at mouse-down has three seconds; a cold launch (no running instance of that
+  bundle at mouse-down, with a launch date at or after the click) has fifteen
+  seconds. Both deadlines run from the original mouse-down and never renew on
+  activation, window creation, or callbacks. The click itself must still complete
+  within three seconds. A drag, another click/key/scroll, observed workspace change
+  (including leave-and-return), different app activation, or different/existing
+  focused window invalidates it. No keyboard content is stored. Process identity
+  is bound by PID and launch date. The window must not exist in the mouse-down
+  window-ID snapshot and must still be the exact focused window on the source
+  workspace immediately before the command. Restore/Native Input guards block
+  approval. Consumption precedes execution; there is no delayed retry or close
+  return. Move-and-follow is one AeroSpace command, with request/result logging.
+  Focus-observer attachment may retry startup unavailability every 100 ms, for
+  at most two seconds from initial process binding and no more than 20 attempts,
+  within the original launch deadline. PID/launch date are pinned before the
+  first attempt. Permission denial or invalid observer/arguments stops retry;
+  input, navigation, restore guards, process exit/replacement, or loss of app
+  focus cancels pending attachment. Retry never performs a move. Placement
+  requires a successfully attached observer and fresh exact-window validation;
+  if it arrives before readiness, intent is discarded and normal no-follow
+  placement proceeds. There is no queued follow when attachment later succeeds.
+  Click budget, process binding age, first focused-window age, placement-request
+  arrival, and specific cancellation reasons are logged to diagnose cold startup
+  separately from placement delays without recording typed content. Observer
+  attempts also log create/register stage, AX error code, count, and readiness.
+  If the broker times out, the shell rechecks placement before any no-follow
+  fallback so a concurrent move is not overwritten.
+  Ordinary-window evidence requires `AXWindow`, `AXStandardWindow`, explicit
+  non-modal state, and readable children without sheets. Missing/ambiguous
+  metadata denies follow. This is metadata-based protection, not a guarantee
+  for apps that mislabel popups as standard windows. The exact AX/CG window-ID
+  join uses undocumented `_AXUIElementGetWindow`, already used by the legacy
+  Chrome helper; the new broker resolves it dynamically and refuses to start
+  if it is unavailable. It never parses AeroSpace's unstable `debug-windows`
+  output. Accessibility trust must be verified for the built app; trust granted
+  to the development probe does not establish the installed app's permission.
+- **Explicit Chrome service launch.** The existing macOS Automator service
+  `New Chrome Window` (locally bound to Option-Command-Equal) registers a fresh,
+  one-use Chrome intent through the same broker before its existing
+  `make new window` / `activate` action. No second global binding is installed,
+  and the broker never creates a window itself. A request older than 750 ms is
+  rejected; the original request time starts the same three-second warm or
+  fifteen-second cold launch budget. Window IDs, workspace, and navigation
+  generation are captured before creation. All Dock follow identity, ordinary
+  window, exact-focus, observer-readiness, input, navigation, and restore gates
+  still apply. Queued input predating the explicit command and mouse release
+  alone do not cancel it; subsequent input does. Initial binding waits for
+  activation/placement, rather than binding the old window before creation.
+  Failed creation cancels only its matching request token. A missing or
+  declining broker preserves window creation with normal no-follow placement;
+  there is no late follow retry. Command invocation, not arbitrary keyboard
+  monitoring, supplies intent. Other shortcuts and ordinary Command-N are not
+  authorized by this integration.
+  The service logs invocation, arm acceptance/failure, and creation completion
+  or failure to the shared rotating diagnostic log. Failures record numeric
+  codes, not application error text or window contents; logging failure never
+  blocks creation.
+  Install/refresh adapts only the known single-action service or an unchanged
+  previously managed copy, preserving its shortcut and backing up the original
+  workflow under `~/.omarchy-macos-backup`. Missing/customized workflows are
+  left alone. Revert restores the original only if the managed workflow is
+  unchanged; user modifications and the backup are retained otherwise. Workflow
+  changes touch the service bundle and request a Services registration update,
+  without flushing the registry or changing shortcut preferences.
+- **Known Steam notifications stay put at detection.** Steam Helper windows
+  with bundle id `com.valvesoftware.steam.helper` and the exact title family
+  `notificationtoasts_<digits>_desktop` are floated on their creation workspace
+  and excluded from launch-time rehome and its responsive-layout check. If
+  floating fails, they are still not moved. Ordinary Steam windows and other
+  apps with similar titles are not exempt. This narrow incident-based exception
+  is not a general dialog classifier and does not change snapshot/restore or
+  repair filtering.
 - **Authentication dialogs stay on the current workspace.** 1Password windows
   are floated, and macOS's transient Touch ID agent (`coreautha`, bundle id
   `com.apple.LocalAuthentication.UIAgent`) is explicitly excluded from generic
@@ -275,11 +370,14 @@ snapshot or login-time app launch cannot crowd the message workspace.
   new window away.
 - **Unassigned rehome records layout changes.** After launch-time catch-all
   movement, the updated layout is recorded and responsive layout is rechecked.
-- **Automatic app placement never steals focus.** Window-detected assignment
-  rules move assigned apps to their canonical workspace without activating that
-  workspace. Each assigned-window callback records the detected window id,
+- **Automatic app placement does not request focus by default.** Window-detected
+  assignment rules move assigned apps to their canonical workspace without
+  activating it, except for the explicit launch authorization above. Each normal
+  assigned-window callback records the detected window id,
   source and target workspaces, app identity/title, and focused window before
-  and after the move. Every focused-workspace change also records its previous
+  and after the move; broker-approved moves instead log exact window identity
+  and source/destination with the broker's validation and result. Every
+  focused-workspace change also records its previous
   and new workspace, focused monitor, resulting focused window, and elapsed
   time since the prior transition. Changes within two seconds are marked rapid
   and include the preceding transition, so an unsolicited focus burst can be
@@ -291,7 +389,20 @@ snapshot or login-time app launch cannot crowd the message workspace.
 ## Installer Behavior
 
 - Backs up all existing configs (aerospace, skhd, sketchybar, borders) before writing
-- Writes all config files inline from the script (no external dotfiles repo required)
+- Writes config files inline from the script (no external dotfiles repo required);
+  the optional Dock broker source is copied from this repository's
+  `helpers/dock_launch_follow.swift` and built as a separate, opt-in app.
+  A broker build/sign failure or `New Chrome Window` workflow update failure
+  warns without aborting install/refresh; a failed rebuild revokes persistent
+  authorization, and a failed backup or update leaves the workflow unchanged.
+- Permanently retires the legacy Chrome rehome job during install/refresh and
+  before enabling Dock follow: disables its launchd label, boots out any loaded
+  job, verifies it is gone, and moves its LaunchAgent into a recoverable unique
+  file under `~/.omarchy-macos-backup/retired-launchagents/`, outside auto-start.
+  The old app/source are retained for recovery, but no normal installer path
+  recreates or starts its agent. Failure to retire it (including failure to move
+  the plist) blocks replacement startup and `enable`, but does not abort the
+  remaining install/refresh service startup.
 - Disables macOS window animations (`NSAutomaticWindowAnimationsEnabled`, `NSWindowResizeTime`)
 - Starts the core services via `brew services`; JankyBorders is installed, configured, and started only when `OMARCHY_ENABLE_BORDERS=1`
 - Keeps SketchyBar hidden by default, binds `Left ⌥+Z` to an explicit toggle,
