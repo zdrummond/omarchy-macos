@@ -107,7 +107,9 @@ You can also replay the saved state manually:
 1Password windows and macOS Touch ID prompts are floated and kept on the
 workspace where they appear, so approving a fingerprint prompt does not move
 or strand you on another workspace. Known Steam notification toasts also stay
-floating where they appear instead of triggering launch placement.
+floating where they appear instead of triggering launch placement. A floating
+window that reopens off-screen, in the corner where AeroSpace parks hidden
+windows, is centered on its display.
 Applications and macOS can still activate their own windows. Rapid workspace changes and retained
 authentication prompts are recorded in `/tmp/omarchy_window_state.log` for
 diagnosis. The shortcut reference remains visible on the desktop; use

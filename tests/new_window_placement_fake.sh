@@ -51,6 +51,13 @@ format_row() {
   out="${out//%\{app-bundle-id\}/$bundle}"
   out="${out//%\{window-layout\}/$layout}"
   out="${out//%\{window-title\}/$title}"
+  out="${out//%\{app-pid\}/500}"
+  out="${out//%\{monitor-appkit-nsscreen-screens-id\}/1}"
+  if [[ " ${OMARCHY_FAKE_HIDDEN_WORKSPACES:-} " == *" $workspace "* ]]; then
+    out="${out//%\{workspace-is-visible\}/false}"
+  else
+    out="${out//%\{workspace-is-visible\}/true}"
+  fi
   printf '%s\n' "$out"
 }
 
@@ -129,13 +136,21 @@ cat > "$CONFIG_DIR/responsive_layout.sh" <<'EOF'
 printf 'responsive:%s:%s\n' "${1:-}" "${2:-}" >> "$OMARCHY_FAKE_COMMANDS"
 EOF
 
-chmod +x "$CONFIG_DIR"/*.sh "$FAKE_BIN/aerospace"
+cat > "$FAKE_BIN/window_onscreen" <<'EOF'
+#!/usr/bin/env bash
+printf 'onscreen:%s\n' "$*" | tr ' ' ':' >> "$OMARCHY_FAKE_COMMANDS"
+printf '%s\n' "${OMARCHY_FAKE_ONSCREEN_RESULT:-onscreen}"
+exit "${OMARCHY_FAKE_ONSCREEN_EXIT:-0}"
+EOF
+
+chmod +x "$CONFIG_DIR"/*.sh "$FAKE_BIN/aerospace" "$FAKE_BIN/window_onscreen"
 export PATH="$FAKE_BIN:$PATH"
 export OMARCHY_AEROSPACE_BIN="$FAKE_BIN/aerospace"
 export OMARCHY_FAKE_WINDOWS="$WINDOWS_FILE"
 export OMARCHY_FAKE_FOCUSED="$FOCUSED_FILE"
 export OMARCHY_FAKE_COMMANDS="$COMMANDS_FILE"
 export OMARCHY_WINDOW_STATE_LOG="$LOG_FILE"
+export OMARCHY_WINDOW_ONSCREEN_BIN="$FAKE_BIN/window_onscreen"
 export OMARCHY_SPACE_ALIAS_FILE="$ALIAS_FILE"
 # Most cases decide immediately; the late-focus case raises this.
 export OMARCHY_FRONT_WAIT_MS=0
@@ -280,12 +295,35 @@ focus_row '30|04|iTerm2|com.googlecode.iterm2|'
 run_case 30
 expect 'responsive:assigned-window-settled-04:30'
 
-# AeroSpace-floated dialogs and popups stay with their app.
+# AeroSpace-floated dialogs and popups stay with their app. They are only
+# checked for an off-screen frame, on the display of their workspace.
 windows '66|04|Google Chrome|com.google.Chrome|Sign in|floating'
 focus_row '66|04|Google Chrome|com.google.Chrome|Sign in|floating'
 run_case 66
-[[ ! -s "$COMMANDS_FILE" ]] || fail
+expect 'onscreen:500:66:1'
 grep -Fq 'floating window stays window=66' "$LOG_FILE"
+! grep -Fq 'off-screen' "$LOG_FILE" || fail
+
+# A floating window reopened in AeroSpace's hide corner is centered (the
+# System Settings incident), and the move is logged.
+windows '3213|05|System Settings|com.apple.systempreferences|Privacy & Security|floating'
+focus_row '3213|05|System Settings|com.apple.systempreferences|Privacy & Security|floating'
+OMARCHY_FAKE_ONSCREEN_RESULT='moved from=1727,1065 to=503,112' run_case 3213
+expect 'onscreen:500:3213:1'
+grep -Fq 'off-screen floating window centered window=3213 workspace=05 app=System Settings moved from=1727,1065 to=503,112' "$LOG_FILE"
+
+# A helper failure is logged and changes nothing else.
+OMARCHY_FAKE_ONSCREEN_RESULT='Accessibility permission is required' OMARCHY_FAKE_ONSCREEN_EXIT=3 run_case 3213
+expect 'onscreen:500:3213:1'
+grep -Fq 'off-screen check failed window=3213 workspace=05 app=System Settings: Accessibility permission is required' "$LOG_FILE"
+
+# Windows on hidden workspaces belong in the hide corner; never show them.
+OMARCHY_FAKE_HIDDEN_WORKSPACES='05' run_case 3213
+[[ ! -s "$COMMANDS_FILE" ]] || fail
+
+# Without the compiled helper, floating windows are simply left alone.
+OMARCHY_WINDOW_ONSCREEN_BIN="$TMP_ROOT/missing" run_case 3213
+[[ ! -s "$COMMANDS_FILE" ]] || fail
 
 # Touch ID prompts float and stay.
 windows '60|04|coreautha|com.apple.LocalAuthentication.UIAgent|1Password Touch ID'
@@ -383,5 +421,13 @@ rmdir "$LOCK_DIR"
 wait "$waiting"
 expect $'move-follow:81:08\nsave:launch-placement-08\nresponsive:launch-placement-08:81'
 [[ ! -e "$LOCK_DIR" ]] || fail
+
+# The generated off-screen helper must compile; the installer hides its errors.
+if command -v swiftc >/dev/null 2>&1; then
+  awk '/cat > "\$WINDOW_ONSCREEN_SRC" << '\''WINDOW_ONSCREEN_SWIFT_EOF'\''/{in_block=1; next} /^WINDOW_ONSCREEN_SWIFT_EOF$/{exit} in_block{print}' \
+    "$ROOT/install.sh" > "$TMP_ROOT/window_onscreen.swift"
+  grep -q '_AXUIElementGetWindow' "$TMP_ROOT/window_onscreen.swift" || fail
+  swiftc -typecheck "$TMP_ROOT/window_onscreen.swift" || fail
+fi
 
 printf 'new_window_placement_fake.sh: all checks passed\n'

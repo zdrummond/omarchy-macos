@@ -245,6 +245,13 @@ snapshot or login-time app launch cannot crowd the message workspace.
      Input is active; AeroSpace-floated windows (dialogs, sheets, popups);
      Touch ID prompts, 1Password, and known Steam notification toasts (below);
      windows without an app bundle id.
+     A floating window that opens mostly outside every display (an app that
+     quit while its workspace was hidden reopens in AeroSpace's hide corner)
+     is centered on the display of its workspace through Accessibility, and
+     the recovery is logged. It is still not moved to another workspace and
+     focus is unchanged. Windows on hidden workspaces are never shown this
+     way, and without the compiled helper or Accessibility trust the window is
+     left where it opened.
   2. **Destination.** An assigned app's destination is its category's slot-0
      workspace; if the window is already there, nothing moves. An unassigned
      app that opens in an unnamed workspace stays where it opened. An

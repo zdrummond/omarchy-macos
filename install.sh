@@ -93,6 +93,8 @@ NEW_WINDOW_PLACEMENT_HELPER="$AEROSPACE_DIR/new_window_placement.sh"
 WORKSPACE_CHANGE_LOG_HELPER="$AEROSPACE_DIR/workspace_change_log.sh"
 MONITOR_FRAME_SRC="$AEROSPACE_DIR/monitor_frame.swift"
 MONITOR_FRAME_BIN="$AEROSPACE_DIR/monitor_frame"
+WINDOW_ONSCREEN_SRC="$AEROSPACE_DIR/window_onscreen.swift"
+WINDOW_ONSCREEN_BIN="$AEROSPACE_DIR/window_onscreen"
 WINDOW_STATE_SAVE_INTERVAL_SECONDS=900
 WINDOW_STATE_SAVER_LABEL="com.omarchy-macos.window_state_saver"
 WINDOW_STATE_SAVER_PLIST="$HOME/Library/LaunchAgents/$WINDOW_STATE_SAVER_LABEL.plist"
@@ -1857,6 +1859,7 @@ LOCK_DIR="${OMARCHY_PLACEMENT_LOCK:-$TMP_ROOT/omarchy_window_placement.lock}"
 FRONT_WAIT_MS="${OMARCHY_FRONT_WAIT_MS:-500}"
 LAUNCH_GROUP_MS="${OMARCHY_LAUNCH_GROUP_MS:-2000}"
 LOG_FILE="${OMARCHY_WINDOW_STATE_LOG:-/tmp/omarchy_window_state.log}"
+WINDOW_ONSCREEN_BIN="${OMARCHY_WINDOW_ONSCREEN_BIN:-$HOME/.config/aerospace/window_onscreen}"
 
 log_msg() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >> "$LOG_FILE" 2>/dev/null || true
@@ -1938,10 +1941,33 @@ if [[ "$bundle_id" == "com.apple.LocalAuthentication.UIAgent" || "$app_name" == 
   exit 0
 fi
 
+# Apps reopen windows at their last frame. One that quit while its workspace
+# was hidden reopens in AeroSpace's hide corner, and AeroSpace never lays out
+# floating windows, so center it. Only on a visible workspace: a window shown
+# over another workspace would be worse than one parked off-screen.
+recover_offscreen_floating_window() {
+  local details pid visible screen result
+  [ -x "$WINDOW_ONSCREEN_BIN" ] || return 0
+  details=$("$OMARCHY_AEROSPACE_BIN" list-windows --all \
+    --format '%{window-id}|%{app-pid}|%{workspace-is-visible}|%{monitor-appkit-nsscreen-screens-id}' 2>/dev/null |
+    awk -F'|' -v id="$window_id" '$1 == id && !found { print; found = 1 }') || return 0
+  IFS='|' read -r _ pid visible screen <<< "$details"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  [ "$visible" = "true" ] || return 0
+  if result=$("$WINDOW_ONSCREEN_BIN" "$pid" "$window_id" "$screen" 2>&1); then
+    case "$result" in
+      moved*) log_msg "off-screen floating window centered window=$window_id workspace=$workspace app=$app_name $result" ;;
+    esac
+  else
+    log_msg "off-screen check failed window=$window_id workspace=$workspace app=$app_name: $result"
+  fi
+}
+
 # AeroSpace already floats dialogs, sheets, and popups. They stay with the app
 # window that opened them.
 if [ "$layout" = "floating" ]; then
   log_msg "floating window stays window=$window_id workspace=$workspace app=$app_name bundle=$bundle_id; no rehome or follow"
+  recover_offscreen_floating_window
   exit 0
 fi
 
@@ -2063,10 +2089,121 @@ for screen in NSScreen.screens {
 exit(1)
 MONITOR_FRAME_SWIFT_EOF
 
+  cat > "$WINDOW_ONSCREEN_SRC" << 'WINDOW_ONSCREEN_SWIFT_EOF'
+import AppKit
+import ApplicationServices
+
+// Usage: window_onscreen <pid> <window-id> [nsscreen-index]
+// Centers a window that is mostly outside every display. Apps reopen windows
+// at their last frame, which can be AeroSpace's hide corner.
+// Prints "onscreen" or "moved from=<x>,<y> to=<x>,<y>".
+
+@_silgen_name("_AXUIElementGetWindow")
+func _AXUIElementGetWindow(_ element: AXUIElement, _ id: UnsafeMutablePointer<CGWindowID>) -> AXError
+
+let args = CommandLine.arguments
+guard args.count >= 3, let pid = pid_t(args[1]), let windowID = CGWindowID(args[2]) else {
+    fputs("usage: window_onscreen <pid> <window-id> [nsscreen-index]\n", stderr)
+    exit(2)
+}
+guard AXIsProcessTrusted() else {
+    fputs("Accessibility permission is required\n", stderr)
+    exit(3)
+}
+
+func findWindow() -> AXUIElement? {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(AXUIElementCreateApplication(pid), kAXWindowsAttribute as CFString, &value) == .success,
+          let windows = value as? [AXUIElement] else {
+        return nil
+    }
+    return windows.first { window in
+        var id: CGWindowID = 0
+        return _AXUIElementGetWindow(window, &id) == .success && id == windowID
+    }
+}
+
+// A just-created window can take a moment to join its app's AX window list.
+var found: AXUIElement?
+for _ in 0..<20 {
+    found = findWindow()
+    if found != nil { break }
+    usleep(50_000)
+}
+guard let window = found else {
+    fputs("window \(windowID) not found for pid \(pid)\n", stderr)
+    exit(4)
+}
+
+func axValue(_ attribute: String) -> AXValue? {
+    var ref: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(window, attribute as CFString, &ref) == .success,
+          let ref, CFGetTypeID(ref) == AXValueGetTypeID() else {
+        return nil
+    }
+    return (ref as! AXValue)
+}
+
+func setAXValue(_ attribute: String, _ value: AXValue?) -> Bool {
+    guard let value else { return false }
+    return AXUIElementSetAttributeValue(window, attribute as CFString, value) == .success
+}
+
+var origin = CGPoint.zero
+var size = CGSize.zero
+guard let position = axValue(kAXPositionAttribute), AXValueGetValue(position, .cgPoint, &origin),
+      let extent = axValue(kAXSizeAttribute), AXValueGetValue(extent, .cgSize, &size),
+      size.width > 0, size.height > 0 else {
+    fputs("window \(windowID) has no readable frame\n", stderr)
+    exit(5)
+}
+
+// AX uses top-left-origin global coordinates; AppKit screens are bottom-left.
+let screens = NSScreen.screens
+guard let primaryHeight = screens.first?.frame.height else { exit(6) }
+func axRect(_ rect: CGRect) -> CGRect {
+    CGRect(x: rect.minX, y: primaryHeight - rect.maxY, width: rect.width, height: rect.height)
+}
+
+let frame = CGRect(origin: origin, size: size)
+let visibleArea = screens.reduce(CGFloat(0)) { total, screen in
+    let overlap = frame.intersection(axRect(screen.frame))
+    return overlap.isNull ? total : total + overlap.width * overlap.height
+}
+if visibleArea >= frame.width * frame.height / 2 {
+    print("onscreen")
+    exit(0)
+}
+
+// Prefer the display showing the window's workspace, then the pointer's display.
+var target: NSScreen?
+if args.count > 3, let index = Int(args[3]), index >= 1, index <= screens.count {
+    target = screens[index - 1]
+}
+if target == nil {
+    let mouse = NSEvent.mouseLocation
+    target = screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main ?? screens.first
+}
+guard let area = target.map({ axRect($0.visibleFrame) }) else { exit(6) }
+
+var fitted = CGSize(width: min(size.width, area.width), height: min(size.height, area.height))
+if fitted != size {
+    _ = setAXValue(kAXSizeAttribute, AXValueCreate(.cgSize, &fitted))
+}
+var centered = CGPoint(x: (area.midX - fitted.width / 2).rounded(), y: (area.midY - fitted.height / 2).rounded())
+guard setAXValue(kAXPositionAttribute, AXValueCreate(.cgPoint, &centered)) else {
+    fputs("could not move window \(windowID)\n", stderr)
+    exit(7)
+}
+print("moved from=\(Int(origin.x)),\(Int(origin.y)) to=\(Int(centered.x)),\(Int(centered.y))")
+WINDOW_ONSCREEN_SWIFT_EOF
+
   if command -v swiftc &>/dev/null; then
     swiftc -O "$MONITOR_FRAME_SRC" -o "$MONITOR_FRAME_BIN" 2>/dev/null || \
       warn "Could not compile monitor_frame helper; responsive layout will use fallback widths"
     [[ -x "$MONITOR_FRAME_BIN" ]] && chmod +x "$MONITOR_FRAME_BIN"
+    swiftc -O "$WINDOW_ONSCREEN_SRC" -o "$WINDOW_ONSCREEN_BIN" 2>/dev/null || \
+      warn "Could not compile window_onscreen helper; off-screen floating windows will not be recovered"
   else
     warn "swiftc not found — responsive layout will use fallback monitor widths"
   fi
