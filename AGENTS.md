@@ -51,3 +51,25 @@ Before committing behavior changes, run:
 ```bash
 scripts/check_spec_drift.sh
 ```
+
+## Task tracking
+
+Track work in GitHub Issues on `zdrummond/omarchy-macos` using the `gh` CLI.
+Do not use beads (`bd`), TODO files, or Markdown checklists in the repo. Beads
+was retired on 2026-11-08 and its open issues were moved to GitHub.
+
+- At session start, run `gh issue list` to see open work. Read the relevant
+  issue with `gh issue view <n>` before starting on it.
+- Open an issue before starting non-trivial work, and for any bug or
+  follow-up found along the way that is not fixed in the same change. Use the
+  `bug` or `enhancement` label. Include the observed behavior, the cause if
+  known (with evidence from the diagnostics log), and acceptance criteria.
+- Record progress, deployment, and live-verification results as issue
+  comments. A fix is not done until its live behavior is verified, so
+  record that verification on the issue.
+- Reference the issue in commits (`Fixes #<n>` when the commit completes it).
+  The issue closes when that commit reaches `main` on GitHub. Close an issue
+  by hand with a short reason only when no commit finishes it.
+- The repository is public. Keep personal details out of issues: no names,
+  message or window titles, email addresses, or account details copied from
+  the live window list or logs.
